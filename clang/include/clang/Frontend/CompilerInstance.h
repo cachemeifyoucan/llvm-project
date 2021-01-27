@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/BuryPointer.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/OutputBackend.h"
 #include <cassert>
 #include <list>
 #include <memory>
@@ -84,6 +85,9 @@ class CompilerInstance : public ModuleLoader {
 
   /// The file manager.
   IntrusiveRefCntPtr<FileManager> FileMgr;
+
+  /// The output context.
+  IntrusiveRefCntPtr<llvm::vfs::OutputBackend> TheOutputBackend;
 
   /// The source manager.
   IntrusiveRefCntPtr<SourceManager> SourceMgr;
@@ -157,21 +161,8 @@ class CompilerInstance : public ModuleLoader {
   /// The stream for verbose output.
   raw_ostream *VerboseOutputStream = &llvm::errs();
 
-  /// Holds information about the output file.
-  ///
-  /// If TempFilename is not empty we must rename it to Filename at the end.
-  /// TempFilename may be empty and Filename non-empty if creating the temporary
-  /// failed.
-  struct OutputFile {
-    std::string Filename;
-    Optional<llvm::sys::fs::TempFile> File;
-
-    OutputFile(std::string filename, Optional<llvm::sys::fs::TempFile> file)
-        : Filename(std::move(filename)), File(std::move(file)) {}
-  };
-
   /// The list of active output files.
-  std::list<OutputFile> OutputFiles;
+  std::list<std::unique_ptr<llvm::vfs::OutputFile>> OutputFiles;
 
   /// Force an output buffer.
   std::unique_ptr<llvm::raw_pwrite_stream> OutputStream;
@@ -411,6 +402,17 @@ public:
 
   /// Replace the current file manager and virtual file system.
   void setFileManager(FileManager *Value);
+
+  /// Set the output manager.
+  void setOutputBackend(IntrusiveRefCntPtr<llvm::vfs::OutputBackend> NewOutputs);
+
+  /// Create an output manager.
+  void createOutputBackend();
+
+  bool hasOutputBackend() const { return bool(TheOutputBackend); }
+
+  llvm::vfs::OutputBackend &getOutputBackend();
+  llvm::vfs::OutputBackend &getOrCreateOutputBackend();
 
   /// }
   /// @name Source Manager
