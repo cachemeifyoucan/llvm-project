@@ -1341,6 +1341,12 @@ def RTTI : DiagGroup<"rtti">;
 
 def OpenCLCoreFeaturesDiagGroup : DiagGroup<"pedantic-core-features">;
 
+// Remarks for cached -cc1.
+def CASFSResultCacheMiss : DiagGroup<"cas-fs-result-cache-miss">;
+def CASFSResultCacheHit : DiagGroup<"cas-fs-result-cache-hit">;
+def CASFSResultCache : DiagGroup<"cas-fs-result-cache", [CASFSResultCacheMiss,
+                                                         CASFSResultCacheHit]>;
+
 // Warnings and extensions to make preprocessor macro usage pedantic.
 def PedanticMacros : DiagGroup<"pedantic-macros",
                     [DeprecatedPragma,
