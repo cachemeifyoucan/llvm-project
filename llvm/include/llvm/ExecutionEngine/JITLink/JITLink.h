@@ -863,6 +863,7 @@ private:
 
 public:
   using external_symbol_iterator = ExternalSymbolSet::iterator;
+  using const_external_symbol_iterator = ExternalSymbolSet::const_iterator;
 
   using section_iterator = pointee_iterator<SectionList::iterator>;
   using const_section_iterator = pointee_iterator<SectionList::const_iterator>;
@@ -1176,7 +1177,15 @@ public:
     return make_range(ExternalSymbols.begin(), ExternalSymbols.end());
   }
 
+  iterator_range<const_external_symbol_iterator> external_symbols() const {
+    return make_range(ExternalSymbols.begin(), ExternalSymbols.end());
+  }
+
   iterator_range<external_symbol_iterator> absolute_symbols() {
+    return make_range(AbsoluteSymbols.begin(), AbsoluteSymbols.end());
+  }
+
+  iterator_range<const_external_symbol_iterator> absolute_symbols() const {
     return make_range(AbsoluteSymbols.begin(), AbsoluteSymbols.end());
   }
 
