@@ -1780,6 +1780,10 @@ void visitExistingEdges(LinkGraph &G, VisitorTs &&...Vs) {
 Expected<std::unique_ptr<LinkGraph>>
 createLinkGraphFromObject(MemoryBufferRef ObjectBuffer);
 
+/// Get the right edge kind name function for a target triple.
+Expected<LinkGraph::GetEdgeKindNameFunction>
+getGetEdgeKindNameFunction(const Triple &TT);
+
 /// Link the given graph.
 void link(std::unique_ptr<LinkGraph> G, std::unique_ptr<JITLinkContext> Ctx);
 
