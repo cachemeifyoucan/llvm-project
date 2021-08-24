@@ -1,5 +1,6 @@
 set(LLVM_LINK_COMPONENTS
   BinaryFormat
+  CAS
   MC
   Option
   ProfileData
@@ -14,6 +15,7 @@ endif()
 add_clang_library(clangDriver
   Action.cpp
   Compilation.cpp
+  CC1DepScanDProtocol.cpp
   Distro.cpp
   Driver.cpp
   DriverOptions.cpp
