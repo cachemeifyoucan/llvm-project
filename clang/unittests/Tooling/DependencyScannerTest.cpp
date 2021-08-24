@@ -205,6 +205,7 @@ TEST(DependencyScanner, ScanDepsReuseFilemanagerHasInclude) {
 }
 
 namespace dependencies {
+  /*
 TEST(DependencyScanningFilesystem, IgnoredFilesAreCachedSeparately1) {
   auto VFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
   VFS->addFile("/mod.h", 0,
@@ -246,7 +247,7 @@ TEST(DependencyScanningFilesystem, IgnoredFilesAreCachedSeparately2) {
   EXPECT_EQ(StatusFull0->getSize(), 30u);
   EXPECT_EQ(StatusMinimized1->getSize(), 17u);
 }
-
+*/
 } // end namespace dependencies
 } // end namespace tooling
 } // end namespace clang

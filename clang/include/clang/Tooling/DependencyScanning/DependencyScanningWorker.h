@@ -20,6 +20,12 @@
 #include "llvm/Support/FileSystem.h"
 #include <string>
 
+namespace llvm {
+namespace cas {
+class CachingOnDiskFileSystem;
+}
+} // namespace llvm
+
 namespace clang {
 
 class DependencyOutputOptions;
@@ -67,6 +73,17 @@ public:
                                   DependencyConsumer &Consumer,
                                   llvm::Optional<StringRef> ModuleName = None);
 
+  /// Scan from a compiler invocation.
+  void computeDependenciesFromCompilerInvocation(
+      std::shared_ptr<CompilerInvocation> Invocation,
+      StringRef WorkingDirectory, DependencyConsumer &Consumer,
+      DiagnosticConsumer &DiagsConsumer);
+  void computeDependenciesFromCC1CommandLine(ArrayRef<const char *> Args,
+                                             StringRef WorkingDirectory,
+                                             DependencyConsumer &DepsConsumer);
+
+  llvm::cas::CachingOnDiskFileSystem &getRealFS() { return *CacheFS; }
+
 private:
   std::shared_ptr<PCHContainerOperations> PCHContainerOps;
   std::unique_ptr<ExcludedPreprocessorDirectiveSkipMapping> PPSkipMappings;
@@ -75,6 +92,8 @@ private:
   llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> RealFS;
   /// The in-memory filesystem laid on top the physical filesystem in `RealFS`.
   llvm::IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> InMemoryFS;
+  /// The caching file system.
+  llvm::IntrusiveRefCntPtr<llvm::cas::CachingOnDiskFileSystem> CacheFS;
   /// The file system that is used by each worker when scanning for
   /// dependencies. This filesystem persists across multiple compiler
   /// invocations.
@@ -85,6 +104,7 @@ private:
   ScanningOutputFormat Format;
   /// Whether to optimize the modules' command-line arguments.
   bool OptimizeArgs;
+  bool OverrideCASTokenCache;
 };
 
 } // end namespace dependencies
