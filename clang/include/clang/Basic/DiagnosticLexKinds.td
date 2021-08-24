@@ -274,6 +274,13 @@ def err_lexing_char : Error<"failure when lexing a character literal">;
 def err_lexing_numeric : Error<"failure when lexing a numeric literal">;
 def err_placeholder_in_source : Error<"editor placeholder in source file">;
 
+
+//===----------------------------------------------------------------------===//
+// PTH Diagnostics
+//===----------------------------------------------------------------------===//
+def err_invalid_pth_file : Error<
+    "invalid or corrupt PTH file '%0'">;
+
 //===----------------------------------------------------------------------===//
 // Preprocessor Diagnostics
 //===----------------------------------------------------------------------===//
@@ -640,6 +647,8 @@ def err_pp_module_end_without_module_begin : Error<
   "'#pragma clang module end'">;
 def note_pp_module_begin_here : Note<
   "entering module '%0' due to this pragma">;
+def err_pp_module_build_pth : Error<
+  "'#pragma clang module build' not supported in pretokenized header">;
 def err_pp_module_build_missing_end : Error<
   "no matching '#pragma clang module endbuild' for this '#pragma clang module build'">;
 
