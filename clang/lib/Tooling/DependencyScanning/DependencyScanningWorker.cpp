@@ -301,8 +301,7 @@ private:
 DependencyScanningWorker::DependencyScanningWorker(
     DependencyScanningService &Service)
     : Format(Service.getFormat()),
-      OverrideCASTokenCache(Service.overrideCASTokenCache()),
-      OptimizeArgs(Service.canOptimizeArgs()) {
+      OverrideCASTokenCache(Service.overrideCASTokenCache()) {
   PCHContainerOps = std::make_shared<PCHContainerOperations>();
   PCHContainerOps->registerReader(
       std::make_unique<ObjectFilePCHContainerReader>());
