@@ -758,9 +758,9 @@ enabled sub-projects. Nearly all of these variable names begin with
   the linker needs to resolve. It is recommended for platforms using the ELF object
   format, like Linux systems when linker memory usage is too high.
 
-**LLVM_ENABLE_EXPERIMENTAL_CAS_FS_AUTO**:BOOL
-  Use a bunch of -fcas-fs options to speed up the build. The interface is
-  experimental (including this configuration option).
+**LLVM_ENABLE_EXPERIMENTAL_DEPSCAN**:BOOL
+  Turn on -fdepscan and related options to canonicalize the build. The
+  interface is experimental (including this configuration option).
 
 **LLVM_ENABLE_EXPERIMENTAL_CAS_TOKEN_CACHE**:BOOL
   Cache tokens automatically using the CAS.
