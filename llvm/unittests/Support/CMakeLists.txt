@@ -63,6 +63,7 @@ add_llvm_unittest(SupportTests
   OutputBackendTest.cpp
   ParallelTest.cpp
   Path.cpp
+  PrefixMapperTest.cpp
   ProcessTest.cpp
   ProgramTest.cpp
   RegexTest.cpp
