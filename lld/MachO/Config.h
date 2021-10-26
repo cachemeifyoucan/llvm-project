@@ -25,6 +25,15 @@
 
 #include <vector>
 
+namespace llvm {
+namespace cas {
+class CASDB;
+}
+namespace casobjectformats {
+class SchemaPool;
+}
+} // namespace llvm
+
 namespace lld {
 namespace macho {
 
@@ -169,6 +178,9 @@ struct Configuration {
   // so use a vector instead of a map.
   std::vector<SectionAlign> sectionAlignments;
   std::vector<SegmentProtection> segmentProtections;
+
+  std::unique_ptr<llvm::cas::CASDB> CAS;
+  std::unique_ptr<llvm::casobjectformats::SchemaPool> CASSchemas;
 
   llvm::DenseMap<llvm::StringRef, SymbolPriorityEntry> priorities;
   llvm::MapVector<std::pair<const InputSection *, const InputSection *>,

@@ -37,6 +37,7 @@ add_lld_library(lldMachO
   ${LLVM_TARGETS_TO_BUILD}
   BinaryFormat
   BitReader
+  CASObjectFormats
   Core
   DebugInfoDWARF
   Demangle

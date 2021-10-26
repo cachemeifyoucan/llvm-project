@@ -18,6 +18,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/CAS/CASDB.h"
 #include "llvm/DebugInfo/DWARF/DWARFUnit.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -33,6 +34,12 @@ namespace MachO {
 class InterfaceFile;
 } // namespace MachO
 class TarWriter;
+namespace casobjectformats {
+class SchemaPool;
+} // namespace casobjectformats
+namespace jitlink {
+class LinkGraph;
+} // namespace jitlink
 } // namespace llvm
 
 namespace lld {
@@ -83,6 +90,7 @@ public:
     DylibKind,
     ArchiveKind,
     BitcodeKind,
+    CASSchemaKind,
   };
 
   virtual ~InputFile() = default;
@@ -104,6 +112,9 @@ public:
 protected:
   InputFile(Kind kind, MemoryBufferRef mb)
       : mb(mb), id(idCount++), fileKind(kind), name(mb.getBufferIdentifier()) {}
+
+  InputFile(Kind kind, StringRef name_)
+      : id(idCount++), fileKind(kind), name(name_) {}
 
   InputFile(Kind, const llvm::MachO::InterfaceFile &);
 
@@ -143,6 +154,22 @@ private:
                         const SectionHeader &, Subsections &);
   void parseDebugInfo();
   void registerCompactUnwind();
+};
+
+// CAS-schema .o file
+class CASSchemaFile final : public InputFile {
+public:
+  CASSchemaFile(llvm::casobjectformats::SchemaPool &CASSchemas,
+                llvm::cas::CASID ID, StringRef filename);
+  ~CASSchemaFile();
+  static bool classof(const InputFile *f) { return f->kind() == CASSchemaKind; }
+
+  Error parse();
+
+private:
+  llvm::casobjectformats::SchemaPool &CASSchemas;
+  llvm::cas::CASID ID;
+  std::unique_ptr<llvm::jitlink::LinkGraph> linkGraph;
 };
 
 // command-line -sectcreate file
