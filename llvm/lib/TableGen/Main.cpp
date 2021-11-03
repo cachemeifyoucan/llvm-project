@@ -261,7 +261,7 @@ struct TableGenCache {
 
   SmallVector<MappedPrefix> PrefixMappings;
   BumpPtrAllocator Alloc;
-  Optional<RealPathPrefixMapper> PM;
+  Optional<TreePathPrefixMapper> PM;
   Optional<PrefixMapper> InversePM;
 
   TableGenCache() = default;
