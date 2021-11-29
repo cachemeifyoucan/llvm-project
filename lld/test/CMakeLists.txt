@@ -37,6 +37,7 @@ if (NOT LLD_BUILT_STANDALONE)
     llvm-ar
     llvm-as
     llvm-bcanalyzer
+    llvm-cas-object-format
     llvm-config
     llvm-cvtres
     llvm-dis

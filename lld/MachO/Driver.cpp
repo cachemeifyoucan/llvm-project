@@ -8,6 +8,7 @@
 
 #include "Driver.h"
 #include "Config.h"
+#include "FileSystem.h"
 #include "ICF.h"
 #include "InputFiles.h"
 #include "LTO.h"
@@ -25,6 +26,7 @@
 #include "lld/Common/Args.h"
 #include "lld/Common/Driver.h"
 #include "lld/Common/ErrorHandler.h"
+#include "lld/Common/Filesystem.h"
 #include "lld/Common/LLVM.h"
 #include "lld/Common/Memory.h"
 #include "lld/Common/Reproduce.h"
@@ -42,7 +44,6 @@
 #include "llvm/Object/Archive.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Parallel.h"
@@ -50,6 +51,7 @@
 #include "llvm/Support/TarWriter.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/TimeProfiler.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TextAPI/PackedVersion.h"
 
 #include <algorithm>
@@ -129,10 +131,10 @@ static Optional<StringRef> findFramework(StringRef name) {
       // NOTE: we must resolve the symlink before trying the suffixes, because
       // there are no symlinks for the suffixed paths.
       SmallString<260> location;
-      if (!fs::real_path(symlink, location)) {
+      if (!macho::fs::real_path(symlink, location)) {
         // only append suffix if realpath() succeeds
         Twine suffixed = location + suffix;
-        if (fs::exists(suffixed))
+        if (macho::fs::exists(suffixed))
           return resolvedFrameworks[key] = saver.save(suffixed.str());
       }
       // Suffix lookup failed, fall through to the no-suffix case.
@@ -145,10 +147,10 @@ static Optional<StringRef> findFramework(StringRef name) {
 }
 
 static bool warnIfNotDirectory(StringRef option, StringRef path) {
-  if (!fs::exists(path)) {
+  if (!macho::fs::exists(path)) {
     warn("directory not found for option -" + option + path);
     return false;
-  } else if (!fs::is_directory(path)) {
+  } else if (!macho::fs::is_directory(path)) {
     warn("option -" + option + path + " references a non-directory path");
     return false;
   }
@@ -169,7 +171,7 @@ getSearchPaths(unsigned optionCode, InputArgList &args,
         SmallString<261> buffer(root);
         path::append(buffer, path);
         // Do not warn about paths that are computed via the syslib roots
-        if (fs::is_directory(buffer)) {
+        if (macho::fs::is_directory(buffer)) {
           paths.push_back(saver.save(buffer.str()));
           found = true;
         }
@@ -187,7 +189,7 @@ getSearchPaths(unsigned optionCode, InputArgList &args,
     for (const StringRef &root : roots) {
       SmallString<261> buffer(root);
       path::append(buffer, path);
-      if (fs::is_directory(buffer))
+      if (macho::fs::is_directory(buffer))
         paths.push_back(saver.save(buffer.str()));
     }
   }
@@ -1251,6 +1253,37 @@ bool macho::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     }
   }
 
+  // Do CAS and virtual filesystem setup early on so that it is available for
+  // filesystem calls.
+
+  // FIXME: Only supporting the \p BuiltinCAS currently, add same flags and
+  // mechanism as on the clang side to be able to use any kind of CAS.
+  if (args.hasArg(OPT_cas_path)) {
+    StringRef path = args.getLastArgValue(OPT_cas_path);
+    auto CAS = llvm::cas::createOnDiskCAS(path);
+    if (CAS) {
+      config->CAS = std::move(*CAS);
+      config->CASSchemas = std::make_unique<SchemaPool>(*config->CAS);
+    } else {
+      error("error loading CAS at path '" + path +
+            "': " + toString(CAS.takeError()));
+    }
+  }
+  Optional<StringRef> CASFileSystemRootID;
+  if (args.hasArg(OPT_fcas_fs))
+    CASFileSystemRootID = args.getLastArgValue(OPT_fcas_fs);
+  Optional<StringRef> CASFileSystemWorkingDirectory;
+  if (args.hasArg(OPT_fcas_fs_working_directory))
+    CASFileSystemRootID = args.getLastArgValue(OPT_fcas_fs_working_directory);
+  auto fs = lld::createFileSystem(config->CAS.get(), CASFileSystemRootID,
+                                  CASFileSystemWorkingDirectory);
+  if (fs) {
+    config->fs = std::move(*fs);
+  } else {
+    error("error creating file system: " + toString(fs.takeError()));
+    config->fs = llvm::vfs::getRealFileSystem();
+  }
+
   // Must be set before any InputSections and Symbols are created.
   config->deadStrip = args.hasArg(OPT_dead_strip);
 
@@ -1352,20 +1385,6 @@ bool macho::link(ArrayRef<const char *> argsArr, bool canExitEarly,
   config->callGraphProfileSort = args.hasFlag(
       OPT_call_graph_profile_sort, OPT_no_call_graph_profile_sort, true);
   config->printSymbolOrder = args.getLastArgValue(OPT_print_symbol_order);
-
-  // FIXME: Only supporting the \p BuiltinCAS currently, add same flags and
-  // mechanism as on the clang side to be able to use any kind of CAS.
-  if (args.hasArg(OPT_cas_path)) {
-    StringRef path = args.getLastArgValue(OPT_cas_path);
-    auto CAS = llvm::cas::createOnDiskCAS(path);
-    if (CAS) {
-      config->CAS = std::move(*CAS);
-      config->CASSchemas = std::make_unique<SchemaPool>(*config->CAS);
-    } else {
-      error("error loading CAS at path '" + path +
-            "': " + toString(CAS.takeError()));
-    }
-  }
 
   // FIXME: Add a commandline flag for this too.
   config->zeroModTime = getenv("ZERO_AR_DATE");
