@@ -775,6 +775,23 @@ OpaqueFile::OpaqueFile(MemoryBufferRef mb, StringRef segName,
   subsections.push_back({{0, isec}});
 }
 
+template <class LP> static void parseLCLinkerOptionsImpl(MemoryBufferRef mb) {
+  using Header = typename LP::mach_header;
+  auto *hdr = reinterpret_cast<const Header *>(mb.getBufferStart());
+  for (auto *cmd : findCommands<linker_option_command>(hdr, LC_LINKER_OPTION)) {
+    StringRef data{reinterpret_cast<const char *>(cmd + 1),
+                   cmd->cmdsize - sizeof(linker_option_command)};
+    parseLCLinkerOption(mb.getBufferIdentifier(), cmd->count, data);
+  }
+}
+
+void ObjFile::parseLCLinkerOptions(MemoryBufferRef mb) {
+  if (target->wordSize == 8)
+    parseLCLinkerOptionsImpl<LP64>(std::move(mb));
+  else
+    parseLCLinkerOptionsImpl<ILP32>(std::move(mb));
+}
+
 ObjFile::ObjFile(MemoryBufferRef mb, uint32_t modTime, StringRef archiveName)
     : InputFile(ObjKind, mb), modTime(modTime) {
   this->archiveName = std::string(archiveName);
@@ -807,7 +824,7 @@ template <class LP> void ObjFile::parse() {
   for (auto *cmd : findCommands<linker_option_command>(hdr, LC_LINKER_OPTION)) {
     StringRef data{reinterpret_cast<const char *>(cmd + 1),
                    cmd->cmdsize - sizeof(linker_option_command)};
-    parseLCLinkerOption(this, cmd->count, data);
+    parseLCLinkerOption(toString(this), cmd->count, data);
   }
 
   ArrayRef<Section> sectionHeaders;
@@ -1026,9 +1043,11 @@ DylibFile::DylibFile(MemoryBufferRef mb, DylibFile *umbrella,
     return;
   }
 
-  if (config->printEachFile)
-    message(toString(this));
-  inputFiles.insert(this);
+  if (!config->depScanning) {
+    if (config->printEachFile)
+      message(toString(this));
+    inputFiles.insert(this);
+  }
 
   deadStrippable = hdr->flags & MH_DEAD_STRIPPABLE_DYLIB;
 
@@ -1044,6 +1063,8 @@ DylibFile::DylibFile(MemoryBufferRef mb, DylibFile *umbrella,
 
   // Initialize symbols.
   exportingFile = isImplicitlyLinked(installName) ? this : this->umbrella;
+  if (config->depScanning)
+    return;
   if (const load_command *cmd = findCommand(hdr, LC_DYLD_INFO_ONLY)) {
     auto *c = reinterpret_cast<const dyld_info_command *>(cmd);
     parseTrie(buf + c->export_off, c->export_size,
@@ -1115,9 +1136,11 @@ DylibFile::DylibFile(const InterfaceFile &interface, DylibFile *umbrella,
   compatibilityVersion = interface.getCompatibilityVersion().rawValue();
   currentVersion = interface.getCurrentVersion().rawValue();
 
-  if (config->printEachFile)
-    message(toString(this));
-  inputFiles.insert(this);
+  if (!config->depScanning) {
+    if (config->printEachFile)
+      message(toString(this));
+    inputFiles.insert(this);
+  }
 
   if (!is_contained(skipPlatformChecks, installName) &&
       !is_contained(interface.targets(), config->platformInfo.target)) {
@@ -1129,6 +1152,8 @@ DylibFile::DylibFile(const InterfaceFile &interface, DylibFile *umbrella,
   checkAppExtensionSafety(interface.isApplicationExtensionSafe());
 
   exportingFile = isImplicitlyLinked(installName) ? this : umbrella;
+  if (config->depScanning)
+    return;
   auto addSymbol = [&](const Twine &name) -> void {
     symbols.push_back(symtab->addDylib(saver.save(name), exportingFile,
                                        /*isWeakDef=*/false,
