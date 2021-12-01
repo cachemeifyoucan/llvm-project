@@ -41,15 +41,21 @@ enum {
 #undef OPTION
 };
 
-void parseLCLinkerOption(InputFile *, unsigned argc, StringRef data);
+void parseLCLinkerOption(StringRef inputName, unsigned argc, StringRef data);
 
-std::string createResponseFile(const llvm::opt::InputArgList &args);
+std::string createResponseFile(const llvm::opt::InputArgList &args,
+                               bool isForCacheKey = false);
+
+llvm::MachO::HeaderFileType getOutputType(const llvm::opt::InputArgList &args);
 
 // Check for both libfoo.dylib and libfoo.tbd (in that order).
 llvm::Optional<StringRef> resolveDylibPath(llvm::StringRef path);
 
 DylibFile *loadDylib(llvm::MemoryBufferRef mbref, DylibFile *umbrella = nullptr,
                      bool isBundleLoader = false);
+void resetLoadedDylibs();
+
+/// Called after dependency scanning pass is finished, to reset to initial state for performing a normal link.
 void resetLoadedDylibs();
 
 // Search for all possible combinations of `{root}/{name}.{extension}`.

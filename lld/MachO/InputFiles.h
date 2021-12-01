@@ -138,6 +138,8 @@ public:
   std::vector<ConcatInputSection *> debugSections;
   std::vector<CallGraphEntry> callGraph;
 
+  static void parseLCLinkerOptions(MemoryBufferRef mb);
+
 private:
   Section *compactUnwindSection = nullptr;
 
