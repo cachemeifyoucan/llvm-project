@@ -233,95 +233,6 @@ static llvm::CachePruningPolicy getLTOCachePolicy(InputArgList &args) {
   return CHECK(parseCachePruningPolicy(ltoPolicy), "invalid LTO cache policy");
 }
 
-<<<<<<< HEAD
-||||||| parent of 72b8a3bcd191 ([lld] Introduce result caching)
-namespace {
-struct ArchiveMember {
-  MemoryBufferRef mbref;
-  uint32_t modTime;
-  uint64_t offsetInArchive;
-};
-} // namespace
-
-// Returns slices of MB by parsing MB as an archive file.
-// Each slice consists of a member file in the archive.
-static std::vector<ArchiveMember> getArchiveMembers(MemoryBufferRef mb) {
-  std::unique_ptr<Archive> file =
-      CHECK(Archive::create(mb),
-            mb.getBufferIdentifier() + ": failed to parse archive");
-  Archive *archive = file.get();
-  make<std::unique_ptr<Archive>>(std::move(file)); // take ownership
-
-  std::vector<ArchiveMember> v;
-  Error err = Error::success();
-
-  // Thin archives refer to .o files, so --reproduce needs the .o files too.
-  bool addToTar = archive->isThin() && tar;
-
-  for (const Archive::Child &c : archive->children(err)) {
-    MemoryBufferRef mbref =
-        CHECK(c.getMemoryBufferRef(),
-              mb.getBufferIdentifier() +
-                  ": could not get the buffer for a child of the archive");
-    if (addToTar)
-      tar->append(relativeToRoot(check(c.getFullName())), mbref.getBuffer());
-    uint32_t modTime = toTimeT(
-        CHECK(c.getLastModified(), mb.getBufferIdentifier() +
-                                       ": could not get the modification "
-                                       "time for a child of the archive"));
-    v.push_back({mbref, modTime, c.getChildOffset()});
-  }
-  if (err)
-    fatal(mb.getBufferIdentifier() +
-          ": Archive::children failed: " + toString(std::move(err)));
-
-  return v;
-}
-
-=======
-namespace {
-struct ArchiveMember {
-  MemoryBufferRef mbref;
-  uint32_t modTime;
-  uint64_t offsetInArchive;
-};
-} // namespace
-
-// Returns slices of MB by parsing MB as an archive file.
-// Each slice consists of a member file in the archive.
-static std::vector<ArchiveMember> getArchiveMembers(MemoryBufferRef mb) {
-  std::unique_ptr<Archive> file =
-      CHECK(Archive::create(mb),
-            mb.getBufferIdentifier() + ": failed to parse archive");
-  Archive *archive = file.get();
-  make<std::unique_ptr<Archive>>(std::move(file)); // take ownership
-
-  std::vector<ArchiveMember> v;
-  Error err = Error::success();
-
-  // Thin archives refer to .o files, so --reproduce needs the .o files too.
-  bool addToTar = archive->isThin() && tar;
-
-  for (const Archive::Child &c : archive->children(err)) {
-    MemoryBufferRef mbref =
-        CHECK(c.getMemoryBufferRef(),
-              mb.getBufferIdentifier() +
-                  ": could not get the buffer for a child of the archive");
-    if (addToTar)
-      tar->append(relativeToRoot(check(c.getFullName())), mbref.getBuffer());
-    uint32_t modTime = toTimeT(
-        CHECK(c.getLastModified(), mb.getBufferIdentifier() +
-                                       ": could not get the modification "
-                                       "time for a child of the archive"));
-    v.push_back({mbref, modTime, c.getChildOffset()});
-  }
-  if (err)
-    fatal(mb.getBufferIdentifier() +
-          ": Archive::children failed: " + toString(std::move(err)));
-
-  return v;
-}
-
 static void handleFileForDepScanning(MemoryBufferRef mbref) {
   assert(config->depScanning);
 
@@ -343,8 +254,10 @@ static void handleFileForDepScanning(MemoryBufferRef mbref) {
   }
 }
 
->>>>>>> 72b8a3bcd191 ([lld] Introduce result caching)
 static DenseMap<StringRef, ArchiveFile *> loadedArchives;
+
+static Expected<InputFile *> addCASObject(SchemaPool &CASSchemas, CASID ID,
+                                          StringRef path);
 
 static InputFile *addFile(StringRef path, bool forceLoadArchive,
                           bool isExplicit = true, bool isBundleLoader = false) {
@@ -356,11 +269,8 @@ static InputFile *addFile(StringRef path, bool forceLoadArchive,
     handleFileForDepScanning(mbref);
     return nullptr;
   }
-  InputFile *newFile = nullptr;
 
-  file_magic magic = identify_magic(mbref.getBuffer());
-  switch (magic) {
-  case file_magic::archive: {
+  auto addArchive = [&](MemoryBufferRef mbref) -> InputFile * {
     // Avoid loading archives twice. If the archives are being force-loaded,
     // loading them twice would create duplicate symbol errors. In the
     // non-force-loading case, this is just a minor performance optimization.
@@ -414,9 +324,16 @@ static InputFile *addFile(StringRef path, bool forceLoadArchive,
     }
 
     file->addLazySymbols();
-    newFile = loadedArchives[path] = file;
+    return loadedArchives[path] = file;
+  };
+
+  InputFile *newFile = nullptr;
+  file_magic magic = identify_magic(mbref.getBuffer());
+
+  switch (magic) {
+  case file_magic::archive:
+    newFile = addArchive(mbref);
     break;
-  }
   case file_magic::macho_object:
     newFile = make<ObjFile>(mbref, getModTime(path), "");
     break;
@@ -441,6 +358,43 @@ static InputFile *addFile(StringRef path, bool forceLoadArchive,
     if (DylibFile *dylibFile = loadDylib(mbref, nullptr, isBundleLoader))
       newFile = dylibFile;
     break;
+  case file_magic::cas_id: {
+    if (!config->CAS) {
+      error(path + ": embedding a CAS-ID but CAS is not enabled");
+      break;
+    }
+    CASDB &CAS = *config->CAS;
+    Expected<CASID> expCASID = readCASIDBuffer(CAS, mbref);
+    if (!expCASID) {
+      error(path + ": failed reading: " + toString(expCASID.takeError()));
+      break;
+    }
+    CASID ID = std::move(*expCASID);
+    auto blobRef = CAS.getBlob(ID);
+    if (blobRef) {
+      MemoryBufferRef casMBRef(blobRef->getData(), path);
+      switch (identify_magic(casMBRef.getBuffer())) {
+      case file_magic::archive:
+        newFile = addArchive(casMBRef);
+        break;
+      case file_magic::macho_object:
+        newFile = make<ObjFile>(casMBRef, *blobRef, "");
+        break;
+      default:
+        error(path + ": unexpected CASID file type");
+        break;
+      }
+    } else {
+      consumeError(blobRef.takeError());
+      auto casFile = addCASObject(*config->CASSchemas, ID, path);
+      if (!casFile) {
+        error(path + ": " + toString(casFile.takeError()));
+        break;
+      }
+      newFile = *casFile;
+    }
+    break;
+  }
   default:
     error(path + ": unhandled file type");
   }
@@ -1514,8 +1468,8 @@ bool macho::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     // and seems unlikely that any one would want to strip everything from the
     // path. Hence we've picked a reasonably large number here.
     SmallString<1024> expanded;
-    if (!fs::real_path(config->osoPrefix, expanded,
-                       /*expand_tilde=*/true)) {
+    if (!llvm::sys::fs::real_path(config->osoPrefix, expanded,
+                                  /*expand_tilde=*/true)) {
       // Note: LD64 expands "." to be `<current_dir>/`
       // (ie., it has a slash suffix) whereas real_path() doesn't.
       // So we have to append '/' to be consistent.

@@ -63,6 +63,8 @@
 #include "lld/Common/Reproduce.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/CAS/CASDB.h"
+#include "llvm/CAS/Utils.h"
 #include "llvm/CASObjectFormats/SchemaBase.h"
 #include "llvm/ExecutionEngine/JITLink/x86_64.h"
 #include "llvm/LTO/LTO.h"
@@ -794,6 +796,15 @@ void ObjFile::parseLCLinkerOptions(MemoryBufferRef mb) {
 
 ObjFile::ObjFile(MemoryBufferRef mb, uint32_t modTime, StringRef archiveName)
     : InputFile(ObjKind, mb), modTime(modTime) {
+  init(archiveName);
+}
+
+ObjFile::ObjFile(MemoryBufferRef mb, llvm::cas::CASID ID, StringRef archiveName)
+    : InputFile(ObjKind, mb), modTime(0), casID(std::move(ID)) {
+  init(archiveName);
+}
+
+void ObjFile::init(StringRef archiveName) {
   this->archiveName = std::string(archiveName);
   if (target->wordSize == 8)
     parse<LP64>();
@@ -1301,9 +1312,35 @@ static Expected<InputFile *> loadArchiveMember(MemoryBufferRef mb,
   if (config->zeroModTime)
     modTime = 0;
 
+  StringRef memberName = mb.getBufferIdentifier();
   switch (identify_magic(mb.getBuffer())) {
   case file_magic::macho_object:
     return make<ObjFile>(mb, modTime, archiveName);
+  case file_magic::cas_id: {
+    if (!config->CAS) {
+      return createStringError(
+          inconvertibleErrorCode(),
+          archiveName + ": archive member " + memberName +
+              " embedding a CAS-ID but CAS is not enabled");
+    }
+    CASDB &CAS = *config->CAS;
+    auto ID = readCASIDBuffer(CAS, mb);
+    if (!ID) {
+      return createStringError(
+          inconvertibleErrorCode(),
+          archiveName + ": archive member " + memberName +
+          " failed reading CAS-ID: " + toString(ID.takeError()));
+    }
+    auto blobRef = CAS.getBlob(*ID);
+    if (!blobRef) {
+      consumeError(blobRef.takeError());
+      return createStringError(inconvertibleErrorCode(),
+                               archiveName + ": archive member " + memberName +
+                                   " embedding a non-blob CAS-ID");
+    }
+    MemoryBufferRef objectMB(blobRef->getData(), memberName);
+    return make<ObjFile>(objectMB, *blobRef, archiveName);
+  }
   case file_magic::bitcode:
     return make<BitcodeFile>(mb, archiveName, offsetInArchive);
   default:
