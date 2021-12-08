@@ -11,6 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/BinaryFormat/Magic.h"
+#include "llvm/CAS/CASDB.h"
+#include "llvm/CAS/Utils.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Object/ArchiveWriter.h"
 #include "llvm/Object/IRObjectFile.h"
@@ -28,6 +30,7 @@
 #include <type_traits>
 
 using namespace llvm;
+using namespace llvm::cas;
 using namespace llvm::object;
 
 static LLVMContext LLVMCtx;
@@ -96,6 +99,21 @@ static cl::opt<bool> NoWarningForNoSymbols(
     cl::desc("Do not warn about files that have no symbols"),
     cl::cat(LibtoolCategory), cl::init(false));
 
+// FIXME: Add tests for llvm-libtool-darwin connecting to a CAS and handling
+// object files with embedded CASIDs.
+enum class CASKind { None, Builtin, Plugin };
+
+static cl::opt<CASKind> CASSelection(
+    "fcas", cl::desc("Kind of CAS to use during compilation"),
+    cl::values(clEnumValN(CASKind::Builtin, "builtin", "Use builtin CAS"),
+               clEnumValN(CASKind::Builtin, "plugin", "Use plugin CAS")),
+    cl::init(CASKind::None), cl::cat(LibtoolCategory));
+
+static cl::opt<std::string> CASBuiltinPath(
+    "fcas-builtin-path",
+    cl::desc("Path to a persistent on-disk backing store for the builtin CAS"),
+    cl::cat(LibtoolCategory));
+
 static const std::array<std::string, 3> StandardSearchDirs{
     "/lib",
     "/usr/lib",
@@ -106,6 +124,7 @@ struct Config {
   bool Deterministic = true; // Updated by 'D' and 'U' modifiers.
   uint32_t ArchCPUType;
   uint32_t ArchCPUSubtype;
+  std::unique_ptr<cas::CASDB> CAS;
 };
 
 static Expected<std::string> searchForFile(const Twine &FileName) {
@@ -271,6 +290,38 @@ private:
     }
   }
 
+  Error verifyAndAddMachOObjectFromCAS(NewArchiveMember Member) {
+    if (!C.CAS)
+      return createStringError(
+          std::make_error_code(std::errc::invalid_argument),
+          "CASID object input '" + Member.MemberName +
+              "' while '-fcas' is disabled");
+    CASDB &CAS = *C.CAS;
+
+    auto MBRef = Member.Buf->getMemBufferRef();
+    auto ID = readCASIDBuffer(CAS, MBRef);
+    if (!ID)
+      return ID.takeError();
+
+    auto BlobRef = CAS.getBlob(*ID);
+    if (!BlobRef) {
+      // FIXME: Support CAS schema objects.
+      consumeError(BlobRef.takeError());
+      return createStringError(
+          std::make_error_code(std::errc::invalid_argument),
+          "CASID object input '" + Member.MemberName + "' not a blob object");
+    }
+
+    // This is a native macho file.
+    Member.Contents = BlobRef->getData();
+    // Clear file status since it doesn't matter, the source is the CAS ID.
+    Member.ModTime = sys::TimePoint<std::chrono::seconds>();
+    Member.UID = 0;
+    Member.GID = 0;
+    Member.Perms = 0644;
+    return verifyAndAddMachOObject(std::move(Member));
+  }
+
   Error verifyAndAddMachOObject(NewArchiveMember Member) {
     auto MBRef = Member.Buf->getMemBufferRef();
     Expected<std::unique_ptr<object::ObjectFile>> ObjOrErr =
@@ -347,6 +398,9 @@ private:
 
     if (Magic == file_magic::bitcode)
       return verifyAndAddIRObject(std::move(NewMember));
+
+    if (Magic == file_magic::cas_id)
+      return verifyAndAddMachOObjectFromCAS(std::move(NewMember));
 
     return verifyAndAddMachOObject(std::move(NewMember));
   }
@@ -466,6 +520,9 @@ private:
     if (Magic == file_magic::bitcode)
       return verifyAndAddIRObject(std::move(NewMember));
 
+    if (Magic == file_magic::cas_id)
+      return verifyAndAddMachOObjectFromCAS(std::move(NewMember));
+
     return verifyAndAddMachOObject(std::move(NewMember));
   }
 
@@ -487,6 +544,44 @@ buildSlices(ArrayRef<OwningBinary<Archive>> OutputBinaries) {
   return Slices;
 }
 
+// FIXME: Mostly similar to \p writeArchive(), merge it with ArchiveWriter.cpp.
+static Error
+writeCASIDArchive(cas::CASDB &CAS, StringRef ArcName,
+                  ArrayRef<NewArchiveMember> NewMembers, bool WriteSymtab,
+                  object::Archive::Kind Kind, bool Deterministic, bool Thin,
+                  std::unique_ptr<MemoryBuffer> OldArchiveBuf = nullptr) {
+  auto Buffer =
+      writeArchiveToBuffer(NewMembers, WriteSymtab, Kind, Deterministic, Thin);
+  if (!Buffer)
+    return Buffer.takeError();
+
+  auto Blob = CAS.createBlob((*Buffer)->getBuffer());
+  if (!Blob)
+    return Blob.takeError();
+
+  Expected<sys::fs::TempFile> Temp =
+      sys::fs::TempFile::create(ArcName + ".temp-archive-%%%%%%%.a");
+  if (!Temp)
+    return Temp.takeError();
+  raw_fd_ostream Out(Temp->FD, false);
+  writeCASIDBuffer(CAS, *Blob, Out);
+  Out.flush();
+
+  // At this point, we no longer need whatever backing memory
+  // was used to generate the NewMembers. On Windows, this buffer
+  // could be a mapped view of the file we want to replace (if
+  // we're updating an existing archive, say). In that case, the
+  // rename would still succeed, but it would leave behind a
+  // temporary file (actually the original file renamed) because
+  // a file cannot be deleted while there's a handle open on it,
+  // only renamed. So by freeing this buffer, this ensures that
+  // the last open handle on the destination file, if any, is
+  // closed before we attempt to rename.
+  OldArchiveBuf.reset();
+
+  return Temp->keep(ArcName);
+}
+
 static Error createStaticLibrary(const Config &C) {
   MembersBuilder Builder(C);
   auto DataOrError = Builder.build();
@@ -496,6 +591,12 @@ static Error createStaticLibrary(const Config &C) {
   const auto &NewMembers = DataOrError->MembersPerArchitecture;
 
   if (NewMembers.size() == 1) {
+    if (C.CAS)
+      return writeCASIDArchive(*C.CAS, OutputFile, NewMembers.begin()->second,
+                               /*WriteSymtab=*/true,
+                               /*Kind=*/object::Archive::K_DARWIN,
+                               C.Deterministic,
+                               /*Thin=*/false);
     return writeArchive(OutputFile, NewMembers.begin()->second,
                         /*WriteSymtab=*/true,
                         /*Kind=*/object::Archive::K_DARWIN, C.Deterministic,
@@ -581,6 +682,20 @@ static Expected<Config> parseCommandLine(int Argc, char **Argv) {
             MachO::getArchitectureFromName(ArchType));
   }
 
+  if (CASSelection == CASKind::Plugin) {
+    // FIXME: Pass plugin arguments.
+    return createStringError(std::errc::invalid_argument,
+                             "plugin CAS not supported");
+  } else if (CASSelection == CASKind::Builtin) {
+    std::string CASPath = CASBuiltinPath;
+    if (CASPath.empty())
+      CASPath = llvm::cas::getDefaultOnDiskCASStableID();
+    auto MaybeCAS = cas::createOnDiskCAS(CASPath);
+    if (Error E = MaybeCAS.takeError())
+      return std::move(E);
+    C.CAS = std::move(*MaybeCAS);
+  }
+
   return C;
 }
 
@@ -596,7 +711,7 @@ int main(int Argc, char **Argv) {
   if (VersionOption)
     cl::PrintVersionMessage();
 
-  Config C = *ConfigOrErr;
+  Config C = std::move(*ConfigOrErr);
   switch (LibraryOperation) {
   case Operation::None:
     break;
