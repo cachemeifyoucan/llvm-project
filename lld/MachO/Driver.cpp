@@ -278,6 +278,9 @@ static void handleFileForDepScanning(MemoryBufferRef mbref) {
 
 static DenseMap<StringRef, ArchiveFile *> loadedArchives;
 
+static Expected<InputFile *> addCASObject(SchemaPool &CASSchemas, CASID ID,
+                                          StringRef path);
+
 static InputFile *addFile(StringRef path, ForceLoad forceLoadArchive,
                           bool isExplicit = true, bool isBundleLoader = false) {
   Optional<MemoryBufferRef> buffer = readFile(path);
@@ -288,11 +291,8 @@ static InputFile *addFile(StringRef path, ForceLoad forceLoadArchive,
     handleFileForDepScanning(mbref);
     return nullptr;
   }
-  InputFile *newFile = nullptr;
 
-  file_magic magic = identify_magic(mbref.getBuffer());
-  switch (magic) {
-  case file_magic::archive: {
+  auto addArchive = [&](MemoryBufferRef mbref) -> InputFile * {
     // Avoid loading archives twice. If the archives are being force-loaded,
     // loading them twice would create duplicate symbol errors. In the
     // non-force-loading case, this is just a minor performance optimization.
@@ -336,6 +336,29 @@ static InputFile *addFile(StringRef path, ForceLoad forceLoadArchive,
         Error e = Error::success();
         for (const object::Archive::Child &c : file->getArchive().children(e)) {
           Expected<MemoryBufferRef> mb = c.getMemoryBufferRef();
+          if (!mb)
+            continue;
+          if (identify_magic(mb->getBuffer()) == file_magic::cas_id) {
+            StringRef memberName = mb->getBufferIdentifier();
+            StringRef archiveName = file->getName();
+            if (!config->CAS) {
+              error(archiveName + ": archive member " + memberName +
+                    " embedding a CAS-ID but CAS is not enabled");
+            }
+            CASDB &CAS = *config->CAS;
+            auto ID = readCASIDBuffer(CAS, mb);
+            if (!ID) {
+              error(archiveName + ": archive member " + memberName +
+                    " failed reading CAS-ID: " + toString(ID.takeError()));
+            }
+            auto blobRef = CAS.getBlob(*ID);
+            if (!blobRef) {
+              consumeError(blobRef.takeError());
+              error(archiveName + ": archive member " + memberName +
+                    " embedding a non-blob CAS-ID");
+            }
+            mb = MemoryBufferRef(blobRef->getData(), memberName);
+          }
           if (!mb || !hasObjCSection(*mb))
             continue;
           if (Error e = file->fetch(c, "-ObjC"))
@@ -349,9 +372,16 @@ static InputFile *addFile(StringRef path, ForceLoad forceLoadArchive,
     }
 
     file->addLazySymbols();
-    newFile = loadedArchives[path] = file;
+    return loadedArchives[path] = file;
+  };
+
+  InputFile *newFile = nullptr;
+  file_magic magic = identify_magic(mbref.getBuffer());
+
+  switch (magic) {
+  case file_magic::archive:
+    newFile = addArchive(mbref);
     break;
-  }
   case file_magic::macho_object:
     newFile = make<ObjFile>(mbref, getModTime(path), "");
     break;
@@ -376,6 +406,43 @@ static InputFile *addFile(StringRef path, ForceLoad forceLoadArchive,
     if (DylibFile *dylibFile = loadDylib(mbref, nullptr, isBundleLoader))
       newFile = dylibFile;
     break;
+  case file_magic::cas_id: {
+    if (!config->CAS) {
+      error(path + ": embedding a CAS-ID but CAS is not enabled");
+      break;
+    }
+    CASDB &CAS = *config->CAS;
+    Expected<CASID> expCASID = readCASIDBuffer(CAS, mbref);
+    if (!expCASID) {
+      error(path + ": failed reading: " + toString(expCASID.takeError()));
+      break;
+    }
+    CASID ID = std::move(*expCASID);
+    auto blobRef = CAS.getBlob(ID);
+    if (blobRef) {
+      MemoryBufferRef casMBRef(blobRef->getData(), path);
+      switch (identify_magic(casMBRef.getBuffer())) {
+      case file_magic::archive:
+        newFile = addArchive(casMBRef);
+        break;
+      case file_magic::macho_object:
+        newFile = make<ObjFile>(casMBRef, *blobRef, "");
+        break;
+      default:
+        error(path + ": unexpected CASID file type");
+        break;
+      }
+    } else {
+      consumeError(blobRef.takeError());
+      auto casFile = addCASObject(*config->CASSchemas, ID, path);
+      if (!casFile) {
+        error(path + ": " + toString(casFile.takeError()));
+        break;
+      }
+      newFile = *casFile;
+    }
+    break;
+  }
   default:
     error(path + ": unhandled file type");
   }
@@ -477,21 +544,11 @@ static void addFramework(StringRef name, bool isNeeded, bool isWeak,
 }
 
 // Parses LC_LINKER_OPTION contents, which can add additional command line
-<<<<<<< HEAD
 // flags. This directly parses the flags instead of using the standard argument
 // parser to improve performance.
-void macho::parseLCLinkerOption(InputFile *f, unsigned argc, StringRef data) {
-  SmallVector<StringRef, 4> argv;
-||||||| parent of 72b8a3bcd191 ([lld] Introduce result caching)
-// flags.
-void macho::parseLCLinkerOption(InputFile *f, unsigned argc, StringRef data) {
-  SmallVector<const char *, 4> argv;
-=======
-// flags.
 void macho::parseLCLinkerOption(StringRef inputName, unsigned argc,
                                 StringRef data) {
-  SmallVector<const char *, 4> argv;
->>>>>>> 72b8a3bcd191 ([lld] Introduce result caching)
+  SmallVector<StringRef, 4> argv;
   size_t offset = 0;
   for (unsigned i = 0; i < argc && offset < data.size(); ++i) {
     argv.push_back(data.data() + offset);
@@ -1086,13 +1143,7 @@ static void createFiles(const InputArgList &args) {
           break;
         }
       }
-<<<<<<< HEAD
       addFile(rerootPath(arg->getValue()), ForceLoad::Default);
-||||||| parent of 72b8a3bcd191 ([lld] Introduce result caching)
-      addFile(path, /*forceLoadArchive=*/false);
-=======
-      addFile(rerootPath(arg->getValue()), /*forceLoadArchive=*/false);
->>>>>>> 72b8a3bcd191 ([lld] Introduce result caching)
       break;
     }
     case OPT_needed_library:

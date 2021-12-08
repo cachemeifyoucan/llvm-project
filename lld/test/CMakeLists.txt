@@ -43,6 +43,7 @@ if (NOT LLD_BUILT_STANDALONE)
     llvm-dis
     llvm-dwarfdump
     llvm-lib
+    llvm-libtool-darwin
     llvm-lipo
     llvm-mc
     llvm-nm

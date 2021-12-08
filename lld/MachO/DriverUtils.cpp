@@ -19,6 +19,8 @@
 #include "lld/Common/Reproduce.h"
 #include "llvm/ADT/CachedHashString.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/CAS/CASDB.h"
+#include "llvm/CAS/Utils.h"
 #include "llvm/LTO/LTO.h"
 #include "llvm/Option/Arg.h"
 #include "llvm/Option/ArgList.h"
@@ -30,6 +32,7 @@
 #include "llvm/TextAPI/TextAPIReader.h"
 
 using namespace llvm;
+using namespace llvm::cas;
 using namespace llvm::MachO;
 using namespace llvm::opt;
 using namespace llvm::sys;

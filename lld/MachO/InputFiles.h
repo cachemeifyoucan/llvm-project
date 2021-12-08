@@ -131,10 +131,12 @@ public:
   ObjFile(MemoryBufferRef mb, uint32_t modTime, StringRef archiveName);
   ArrayRef<llvm::MachO::data_in_code_entry> getDataInCode() const;
 
+  ObjFile(MemoryBufferRef mb, llvm::cas::CASID ID, StringRef archiveName);
   static bool classof(const InputFile *f) { return f->kind() == ObjKind; }
 
   llvm::DWARFUnit *compileUnit = nullptr;
   const uint32_t modTime;
+  const llvm::Optional<llvm::cas::CASID> casID;
   std::vector<ConcatInputSection *> debugSections;
   std::vector<CallGraphEntry> callGraph;
 
@@ -143,6 +145,7 @@ public:
 private:
   Section *compactUnwindSection = nullptr;
 
+  void init(StringRef archiveName);
   template <class LP> void parse();
   template <class SectionHeader> void parseSections(ArrayRef<SectionHeader>);
   template <class LP>
