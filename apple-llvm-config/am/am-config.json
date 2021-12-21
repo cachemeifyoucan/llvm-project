@@ -10,5 +10,10 @@
 {
   "target": "swift/master",
   "upstream": "apple/stable/20190619"
+},
+{
+  "target": "experimental/cas/5.6",
+  "upstream": "experimental/cas/main",
+  "test-command": "true"
 }
 ]
