@@ -645,7 +645,7 @@ static Expected<Config> parseCommandLine(int Argc, char **Argv) {
       LibraryOperation.error("must be specified", "", Stream);
       return createStringError(std::errc::invalid_argument, Error.c_str());
     }
-    return C;
+    return std::move(C);
   }
 
   if (OutputFile.empty()) {
@@ -696,7 +696,7 @@ static Expected<Config> parseCommandLine(int Argc, char **Argv) {
     C.CAS = std::move(*MaybeCAS);
   }
 
-  return C;
+  return std::move(C);
 }
 
 int main(int Argc, char **Argv) {
