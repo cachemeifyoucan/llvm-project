@@ -34,7 +34,8 @@ protected:
     G.emplace("graph", Triple("x86_64-apple-darwin"), 8, support::little,
               jitlink::getGenericEdgeKindName);
     Section = &G->createSection("section", jitlink::MemProt::Exec);
-    Z = &G->createZeroFillBlock(*Section, 256, 0, 256, 0);
+    orc::ExecutorAddr Addr(0x0);
+    Z = &G->createZeroFillBlock(*Section, 256, Addr, 256, 0);
     DefinedS =
         &G->addDefinedSymbol(*Z, 0, "Defined", 0, jitlink::Linkage::Strong,
                              jitlink::Scope::Default, false, false);

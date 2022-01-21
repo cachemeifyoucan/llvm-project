@@ -12,6 +12,7 @@
 #include "llvm/CASObjectFormats/Encoding.h"
 #include "llvm/CASObjectFormats/ObjectFormatHelpers.h"
 #include "llvm/ExecutionEngine/JITLink/MemoryFlags.h"
+#include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
 #include "llvm/Support/EndianStream.h"
 
 // FIXME: For cl::opt. Should thread through or delete.
@@ -1905,7 +1906,8 @@ LinkGraphBuilder::getOrCreateSymbol(Expected<TargetRef> Target,
     if (!ForwardDeclaredBlock) {
       jitlink::Section &Section = G.createSection(
           "cas.o: forward-declared", jitlink::MemProt::None);
-      ForwardDeclaredBlock = &G.createZeroFillBlock(Section, 1, 1, 1, 0);
+      ForwardDeclaredBlock =
+          &G.createZeroFillBlock(Section, 1, orc::ExecutorAddr(1), 1, 0);
     }
     S = Name ? &G.addDefinedSymbol(*ForwardDeclaredBlock, 0, *Name, 0,
                                    jitlink::Linkage::Strong,
@@ -1922,15 +1924,15 @@ LinkGraphBuilder::getOrCreateSymbol(Expected<TargetRef> Target,
   return S;
 }
 
-static uint64_t getAlignedAddress(LinkGraphBuilder::SectionInfo &Section,
-                                  uint64_t Size, uint64_t Alignment,
-                                  uint64_t AlignmentOffset) {
+static orc::ExecutorAddr
+getAlignedAddress(LinkGraphBuilder::SectionInfo &Section, uint64_t Size,
+                  uint64_t Alignment, uint64_t AlignmentOffset) {
   uint64_t Address = alignTo(Section.Size + AlignmentOffset, Align(Alignment)) -
                      AlignmentOffset;
   Section.Size = Address + Size;
   if (Alignment > Section.Alignment)
     Section.Alignment = Alignment;
-  return Address;
+  return orc::ExecutorAddr(Address);
 }
 
 Expected<jitlink::Block *>
@@ -1965,7 +1967,7 @@ LinkGraphBuilder::getOrCreateBlock(jitlink::Symbol &ForSymbol, BlockRef Block,
     assert(Size == Content->size());
   }
 
-  uint64_t Address = getAlignedAddress(S, Size, Alignment, AlignmentOffset);
+  auto Address = getAlignedAddress(S, Size, Alignment, AlignmentOffset);
   jitlink::Block &B = Content
                           ? G.createContentBlock(*S.Section, *Content, Address,
                                                  Alignment, AlignmentOffset)
@@ -2056,8 +2058,8 @@ LinkGraphBuilder::createOrDuplicateBlock(jitlink::Symbol &ForSymbol,
 
   SectionInfo &S = Sections[cantFail(Block.getSection())];
   assert(S.Section == &B->getSection());
-  uint64_t Address = getAlignedAddress(S, B->getSize(), B->getAlignment(),
-                                       B->getAlignmentOffset());
+  auto Address = getAlignedAddress(S, B->getSize(), B->getAlignment(),
+                                   B->getAlignmentOffset());
   jitlink::Block &DupBlock =
       B->isZeroFill()
           ? G.createZeroFillBlock(B->getSection(), B->getSize(), Address,

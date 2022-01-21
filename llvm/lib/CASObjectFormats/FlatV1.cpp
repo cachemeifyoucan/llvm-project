@@ -15,6 +15,7 @@
 #include "llvm/CASObjectFormats/Encoding.h"
 #include "llvm/CASObjectFormats/ObjectFormatHelpers.h"
 #include "llvm/ExecutionEngine/JITLink/JITLink.h"
+#include "llvm/ExecutionEngine/Orc/Shared/ExecutorAddress.h"
 #include "llvm/Support/EndianStream.h"
 #include <memory>
 
@@ -192,8 +193,8 @@ static bool compareBlocksByAddress(const jitlink::Block *LHS,
   if (LHS == RHS)
     return false;
 
-  JITTargetAddress LAddr = LHS->getAddress();
-  JITTargetAddress RAddr = RHS->getAddress();
+  auto LAddr = LHS->getAddress();
+  auto RAddr = RHS->getAddress();
   if (LAddr != RAddr)
     return LAddr < RAddr;
 
@@ -217,16 +218,15 @@ static bool compareEdges(const jitlink::Edge *LHS, const jitlink::Edge *RHS) {
       &LHS->getTarget(), &RHS->getTarget(), helpers::compareSymbolsByAddress);
 }
 
-
-static uint64_t getAlignedAddress(LinkGraphBuilder::SectionInfo &Section,
-                                  uint64_t Size, uint64_t Alignment,
-                                  uint64_t AlignmentOffset) {
+static orc::ExecutorAddr
+getAlignedAddress(LinkGraphBuilder::SectionInfo &Section, uint64_t Size,
+                  uint64_t Alignment, uint64_t AlignmentOffset) {
   uint64_t Address = alignTo(Section.Size + AlignmentOffset, Align(Alignment)) -
                      AlignmentOffset;
   Section.Size = Address + Size;
   if (Alignment > Section.Alignment)
     Section.Alignment = Alignment;
-  return Address;
+  return orc::ExecutorAddr(Address);
 }
 
 Expected<ObjectFormatNodeRef>

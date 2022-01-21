@@ -86,17 +86,19 @@ TEST(NestedV1SchemaTest, BlockData) {
                        support::little, jitlink::getGenericEdgeKindName);
   jitlink::Section &Section =
       G.createSection("section", jitlink::MemProt::Exec);
+  orc::ExecutorAddr Addr1(0x0);
+  orc::ExecutorAddr Addr2(0x40);
   jitlink::Block *Blocks[] = {
-      &G.createZeroFillBlock(Section, 0, 0, /*Alignment=*/1, 0),
-      &G.createZeroFillBlock(Section, 8, 64, /*Alignment=*/1, 0),
-      &G.createZeroFillBlock(Section, 8, 64, /*Alignment=*/16, 0),
-      &G.createZeroFillBlock(Section, 8, 64, /*Alignment=*/16, 10),
-      &G.createZeroFillBlock(Section, 8, 64, /*Alignment=*/16, 6),
-      &G.createContentBlock(Section, BlockContent, 0, /*Alignment=*/1, 0),
-      &G.createContentBlock(Section, BlockContent, 64, /*Alignment=*/16, 0),
-      &G.createContentBlock(Section, BlockContent, 64, /*Alignment=*/16, 10),
-      &G.createContentBlock(Section, BlockContent, 64, /*Alignment=*/16, 6),
-      &G.createContentBlock(Section, "other data", 64, /*Alignment=*/16, 6),
+      &G.createZeroFillBlock(Section, 0, Addr1, /*Alignment=*/1, 0),
+      &G.createZeroFillBlock(Section, 8, Addr2, /*Alignment=*/1, 0),
+      &G.createZeroFillBlock(Section, 8, Addr2, /*Alignment=*/16, 0),
+      &G.createZeroFillBlock(Section, 8, Addr2, /*Alignment=*/16, 10),
+      &G.createZeroFillBlock(Section, 8, Addr2, /*Alignment=*/16, 6),
+      &G.createContentBlock(Section, BlockContent, Addr1, /*Alignment=*/1, 0),
+      &G.createContentBlock(Section, BlockContent, Addr2, /*Alignment=*/16, 0),
+      &G.createContentBlock(Section, BlockContent, Addr2, /*Alignment=*/16, 10),
+      &G.createContentBlock(Section, BlockContent, Addr2, /*Alignment=*/16, 6),
+      &G.createContentBlock(Section, "other data", Addr2, /*Alignment=*/16, 6),
   };
 
   std::unique_ptr<cas::CASDB> CAS = cas::createInMemoryCAS();
@@ -126,17 +128,20 @@ TEST(NestedV1SchemaTest, LeafBlock) {
       G.createSection("section1", jitlink::MemProt::Exec);
   jitlink::Section &Section2 =
       G.createSection("section2", jitlink::MemProt::Exec);
+  orc::ExecutorAddr Addr1(0x0);
+  orc::ExecutorAddr Addr2(0x40);
   jitlink::Block *Blocks[] = {
-      &G.createZeroFillBlock(Section1, 0, 0, /*Alignment=*/1, 0),
-      &G.createZeroFillBlock(Section1, 8, 64, /*Alignment=*/1, 0),
-      &G.createZeroFillBlock(Section1, 8, 64, /*Alignment=*/16, 0),
-      &G.createZeroFillBlock(Section1, 8, 64, /*Alignment=*/16, 10),
-      &G.createZeroFillBlock(Section2, 8, 64, /*Alignment=*/16, 6),
-      &G.createContentBlock(Section2, BlockContent, 0, /*Alignment=*/1, 0),
-      &G.createContentBlock(Section2, BlockContent, 64, /*Alignment=*/16, 0),
-      &G.createContentBlock(Section2, BlockContent, 64, /*Alignment=*/16, 10),
-      &G.createContentBlock(Section1, BlockContent, 64, /*Alignment=*/16, 6),
-      &G.createContentBlock(Section1, "other data", 64, /*Alignment=*/16, 6),
+      &G.createZeroFillBlock(Section1, 0, Addr1, /*Alignment=*/1, 0),
+      &G.createZeroFillBlock(Section1, 8, Addr2, /*Alignment=*/1, 0),
+      &G.createZeroFillBlock(Section1, 8, Addr2, /*Alignment=*/16, 0),
+      &G.createZeroFillBlock(Section1, 8, Addr2, /*Alignment=*/16, 10),
+      &G.createZeroFillBlock(Section2, 8, Addr2, /*Alignment=*/16, 6),
+      &G.createContentBlock(Section2, BlockContent, Addr1, /*Alignment=*/1, 0),
+      &G.createContentBlock(Section2, BlockContent, Addr2, /*Alignment=*/16, 0),
+      &G.createContentBlock(Section2, BlockContent, Addr2, /*Alignment=*/16,
+                            10),
+      &G.createContentBlock(Section1, BlockContent, Addr2, /*Alignment=*/16, 6),
+      &G.createContentBlock(Section1, "other data", Addr2, /*Alignment=*/16, 6),
   };
 
   std::unique_ptr<cas::CASDB> CAS = cas::createInMemoryCAS();
@@ -170,7 +175,9 @@ TEST(NestedV1SchemaTest, SymbolFlags) {
                        support::little, jitlink::getGenericEdgeKindName);
   jitlink::Section &Section =
       G.createSection("section", jitlink::MemProt::Exec);
-  jitlink::Block &Block = G.createContentBlock(Section, BlockContent, 0, 16, 0);
+  orc::ExecutorAddr Addr(0x0);
+  jitlink::Block &Block =
+      G.createContentBlock(Section, BlockContent, Addr, 16, 0);
   jitlink::Symbol &StrongDefaultDead =
       G.addDefinedSymbol(Block, 0, "symbol1", 0, jitlink::Linkage::Strong,
                          jitlink::Scope::Default, false, false);
@@ -228,15 +235,17 @@ TEST(NestedV1SchemaTest, BlockSymbols) {
                        support::little, jitlink::getGenericEdgeKindName);
   jitlink::Section &Section =
       G.createSection("section", jitlink::MemProt::Exec);
-  jitlink::Block &Block = G.createContentBlock(Section, BlockContent, 0, 16, 0);
+  orc::ExecutorAddr Addr(0x0);
+  jitlink::Block &Block =
+      G.createContentBlock(Section, BlockContent, Addr, 16, 0);
   jitlink::Symbol *Symbols[] = {
-      &G.addCommonSymbol("common-symbol1", jitlink::Scope::Default, Section, 0,
-                         16, 16, true),
-      &G.addCommonSymbol("common-symbol2", jitlink::Scope::Default, Section, 0,
-                         16, 16, false),
-      &G.addCommonSymbol("common-symbol3", jitlink::Scope::Hidden, Section, 0,
-                         16, 16, false),
-      &G.addCommonSymbol("common-symbol4", jitlink::Scope::Local, Section, 0,
+      &G.addCommonSymbol("common-symbol1", jitlink::Scope::Default, Section,
+                         Addr, 16, 16, true),
+      &G.addCommonSymbol("common-symbol2", jitlink::Scope::Default, Section,
+                         Addr, 16, 16, false),
+      &G.addCommonSymbol("common-symbol3", jitlink::Scope::Hidden, Section,
+                         Addr, 16, 16, false),
+      &G.addCommonSymbol("common-symbol4", jitlink::Scope::Local, Section, Addr,
                          16, 16, false),
       &G.addAnonymousSymbol(Block, 0, 0, false, false),
       &G.addAnonymousSymbol(Block, 0, 0, false, true),
@@ -280,14 +289,16 @@ TEST(NestedV1SchemaTest, SymbolTable) {
                        support::little, jitlink::getGenericEdgeKindName);
   jitlink::Section &Section =
       G.createSection("section", jitlink::MemProt::Exec);
-  jitlink::Block &Block = G.createContentBlock(Section, BlockContent, 0, 16, 0);
+  orc::ExecutorAddr Addr(0x0);
+  jitlink::Block &Block =
+      G.createContentBlock(Section, BlockContent, Addr, 16, 0);
   jitlink::Symbol *Symbols[] = {
       &G.addAnonymousSymbol(Block, 0, 0, false, /*IsLive*/ false),
       &G.addAnonymousSymbol(Block, 0, 0, false, /*IsLive*/ true),
-      &G.addCommonSymbol("symbol1", jitlink::Scope::Default, Section, 0, 16, 16,
-                         true),
-      &G.addCommonSymbol("symbol2", jitlink::Scope::Default, Section, 0, 16, 16,
-                         true),
+      &G.addCommonSymbol("symbol1", jitlink::Scope::Default, Section, Addr, 16,
+                         16, true),
+      &G.addCommonSymbol("symbol2", jitlink::Scope::Default, Section, Addr, 16,
+                         16, true),
   };
 
   std::unique_ptr<cas::CASDB> CAS = cas::createInMemoryCAS();
@@ -344,12 +355,13 @@ TEST(NestedV1SchemaTest, BlockWithEdges) {
   jitlink::Symbol &S2 = G.addExternalSymbol("S2", 0, jitlink::Linkage::Strong);
 
   // Add a defined symbol so there are two types of targets.
-  jitlink::Block &Z = G.createZeroFillBlock(Section, 256, 0, 256, 0);
+  orc::ExecutorAddr Addr(0x0);
+  jitlink::Block &Z = G.createZeroFillBlock(Section, 256, Addr, 256, 0);
   jitlink::Symbol &S3 =
       G.addDefinedSymbol(Z, 0, "S3", 0, jitlink::Linkage::Strong,
                          jitlink::Scope::Default, false, false);
 
-  jitlink::Block &B = G.createContentBlock(Section, BlockContent, 0, 256, 0);
+  jitlink::Block &B = G.createContentBlock(Section, BlockContent, Addr, 256, 0);
 
   // Create arrays of each field. Sort by the order the edges should be sorted
   // (precedence is offset, kind, target name, and addend).
@@ -454,14 +466,16 @@ TEST(NestedV1SchemaTest, RoundTrip) {
   jitlink::Symbol &S2 = G.addExternalSymbol("S2", 0, jitlink::Linkage::Weak);
 
   // Add a defined symbol so there are two types of targets.
-  jitlink::Block &Z = G.createZeroFillBlock(Section, 256, 0, 256, 0);
+  orc::ExecutorAddr Addr(0x0);
+  jitlink::Block &Z = G.createZeroFillBlock(Section, 256, Addr, 256, 0);
   jitlink::Symbol &S3 =
       G.addDefinedSymbol(Z, 0, "S3", 0, jitlink::Linkage::Weak,
                          jitlink::Scope::Default, false, false);
   S3.setAutoHide(true);
 
   auto createBlock = [&]() -> jitlink::Block & {
-    jitlink::Block &B = G.createContentBlock(Section, BlockContent, 0, 256, 0);
+    jitlink::Block &B =
+        G.createContentBlock(Section, BlockContent, Addr, 256, 0);
 
     // Create arrays of each field. Sort by the order the edges should be sorted
     // (precedence is offset, kind, target name, and addend).
@@ -612,8 +626,10 @@ TEST(NestedV1SchemaTest, RoundTripBlockOrder) {
   jitlink::Section &Section =
       G.createSection("section", jitlink::MemProt::Exec);
 
+  orc::ExecutorAddr Addr(0x0);
   auto createBlock = [&]() -> jitlink::Block & {
-    jitlink::Block &B = G.createContentBlock(Section, BlockContent, 0, 256, 0);
+    jitlink::Block &B =
+        G.createContentBlock(Section, BlockContent, Addr, 256, 0);
     return B;
   };
 
@@ -627,7 +643,8 @@ TEST(NestedV1SchemaTest, RoundTripBlockOrder) {
       G.addDefinedSymbol(createBlock(), 0, "B3", 0, jitlink::Linkage::Weak,
                          jitlink::Scope::Local, false, false);
 
-  jitlink::Block &TB = G.createContentBlock(Section, BlockContent, 0, 256, 0);
+  jitlink::Block &TB =
+      G.createContentBlock(Section, BlockContent, Addr, 256, 0);
   jitlink::Symbol *Targets[] = {&B1, &B2, &B3};
   for (unsigned I = 0; I != array_lengthof(Targets); ++I)
     TB.addEdge(jitlink::Edge::FirstKeepAlive, 0, *Targets[I], 0);
@@ -678,7 +695,9 @@ TEST(NestedV1SchemaTest, ModInitFuncSection) {
                        support::little, jitlink::getGenericEdgeKindName);
   jitlink::Section &Section =
       G.createSection("__DATA,__mod_init_func", jitlink::MemProt::Exec);
-  jitlink::Block &Block = G.createContentBlock(Section, BlockContent, 0, 16, 0);
+  orc::ExecutorAddr Addr(0x0);
+  jitlink::Block &Block =
+      G.createContentBlock(Section, BlockContent, Addr, 16, 0);
   jitlink::Symbol *Symbols[] = {
       &G.addAnonymousSymbol(Block, 0, 0, true, false),
   };

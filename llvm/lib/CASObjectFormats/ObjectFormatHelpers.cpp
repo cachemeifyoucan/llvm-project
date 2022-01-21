@@ -234,8 +234,8 @@ bool helpers::compareSymbolsByAddress(const jitlink::Symbol *LHS,
   if (LHS->isExternal() != RHS->isExternal())
     return LHS->isExternal() < RHS->isExternal();
 
-  JITTargetAddress LAddr = LHS->getAddress();
-  JITTargetAddress RAddr = RHS->getAddress();
+  auto LAddr = LHS->getAddress();
+  auto RAddr = RHS->getAddress();
   if (LAddr != RAddr)
     return LAddr < RAddr;
 

@@ -35,14 +35,16 @@ TEST(FlatV1SchemaTest, RoundTrip) {
   jitlink::Symbol &S2 = G.addExternalSymbol("S2", 0, jitlink::Linkage::Weak);
 
   // Add a defined symbol so there are two types of targets.
-  jitlink::Block &Z = G.createZeroFillBlock(Section, 256, 0, 256, 0);
+  orc::ExecutorAddr Addr(0x0);
+  jitlink::Block &Z = G.createZeroFillBlock(Section, 256, Addr, 256, 0);
   jitlink::Symbol &S3 =
       G.addDefinedSymbol(Z, 0, "S3", 0, jitlink::Linkage::Weak,
                          jitlink::Scope::Default, false, false);
   S3.setAutoHide(true);
 
   auto createBlock = [&]() -> jitlink::Block & {
-    jitlink::Block &B = G.createContentBlock(Section, BlockContent, 0, 256, 0);
+    jitlink::Block &B =
+        G.createContentBlock(Section, BlockContent, Addr, 256, 0);
 
     // Create arrays of each field. Sort by the order the edges should be sorted
     // (precedence is offset, kind, target name, and addend).
@@ -95,7 +97,8 @@ TEST(FlatV1SchemaTest, RoundTrip) {
 
   {
     // Create a block with an edge with addend = 0.
-    jitlink::Block &B = G.createContentBlock(Section, BlockContent, 0, 256, 0);
+    jitlink::Block &B =
+        G.createContentBlock(Section, BlockContent, Addr, 256, 0);
     B.addEdge(jitlink::Edge::FirstKeepAlive, 0, S1, 0);
     G.addDefinedSymbol(B, 0, "AddendZeroEdge", 0, jitlink::Linkage::Strong,
                        jitlink::Scope::Default, false, false);
