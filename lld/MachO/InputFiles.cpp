@@ -63,6 +63,7 @@
 #include "lld/Common/Reproduce.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/CAS/Utils.h"
 #include "llvm/CASObjectFormats/SchemaBase.h"
 #include "llvm/ExecutionEngine/JITLink/x86_64.h"
 #include "llvm/LTO/LTO.h"
@@ -1503,6 +1504,20 @@ static Expected<InputFile *> loadArchiveMember(MemoryBufferRef mb,
     return make<ObjFile>(mb, modTime, archiveName);
   case file_magic::bitcode:
     return make<BitcodeFile>(mb, archiveName, offsetInArchive);
+  case file_magic::cas_id: {
+    StringRef memberName = mb.getBufferIdentifier();
+    CASDB &cas = *config->CAS;
+    auto id = readCASIDBuffer(cas, mb);
+    if (!id) {
+      error(archiveName + ": archive member " + memberName +
+            " failed reading CAS-ID: " + toString(id.takeError()));
+    }
+    auto blobRef = cas.getBlob(*id);
+    if (!blobRef)
+      return blobRef.takeError();
+    MemoryBufferRef objectMB(blobRef->getData(), memberName);
+    return make<ObjFile>(objectMB, *blobRef, archiveName);
+  }
   default:
     return createStringError(inconvertibleErrorCode(),
                              mb.getBufferIdentifier() +
@@ -1759,7 +1774,8 @@ Error CASSchemaFile::parse() {
     if (sym->getScope() != jitlink::Scope::Local) {
       return symtab->addDefined(name, file, isec, symbolOffset, size, isWeakDef,
                                 isPrivateExtern, isThumb,
-                                isReferencedDynamically, noDeadStrip);
+                                isReferencedDynamically, noDeadStrip,
+                                /*isWeakDefCanBeHidden=*/false);
     } else {
       return make<Defined>(name, file, isec, symbolOffset, size, isWeakDef,
                            /*isExternal=*/false, /*isPrivateExtern=*/false,
@@ -1845,6 +1861,7 @@ Error CASSchemaFile::parse() {
         bool(section.getMemProt() & jitlink::MemProt::Exec) &&
         !(unsigned(section.getMemProt()) & unsigned(jitlink::MemProt::Write));
     bool isCommonSection = section.getName() == "__common";
+    sections.push_back(0);
 
     std::vector<jitlink::Block *> sortedBlocks;
     llvm::copy(section.blocks(), std::back_inserter(sortedBlocks));
@@ -1858,7 +1875,7 @@ Error CASSchemaFile::parse() {
           *block, segname, subname, containsPureInstructions, this);
       sectionsMap[block] = isec;
       // FIXME: Group the sections into subsections?
-      subsections.push_back({{0, isec}});
+      sections.back().subsections.push_back({0, isec});
 
       auto blockSymsI = blockSymbols.find(block);
       if (blockSymsI != blockSymbols.end()) {

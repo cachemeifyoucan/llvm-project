@@ -227,10 +227,6 @@ Optional<StringRef> macho::resolveDylibPath(StringRef dylibPath) {
 // especially if it's a commonly re-exported core library.
 static DenseMap<CachedHashStringRef, DylibFile *> loadedDylibs;
 
-void macho::resetLoadedDylibs() {
-  loadedDylibs.clear();
-}
-
 DylibFile *macho::loadDylib(MemoryBufferRef mbref, DylibFile *umbrella,
                             bool isBundleLoader) {
   CachedHashStringRef path(mbref.getBufferIdentifier());

@@ -347,7 +347,7 @@ static InputFile *addFile(StringRef path, ForceLoad forceLoadArchive,
                     " embedding a CAS-ID but CAS is not enabled");
             }
             CASDB &CAS = *config->CAS;
-            auto ID = readCASIDBuffer(CAS, mb);
+            auto ID = readCASIDBuffer(CAS, *mb);
             if (!ID) {
               error(archiveName + ": archive member " + memberName +
                     " failed reading CAS-ID: " + toString(ID.takeError()));
@@ -1560,8 +1560,8 @@ bool macho::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     // and seems unlikely that any one would want to strip everything from the
     // path. Hence we've picked a reasonably large number here.
     SmallString<1024> expanded;
-    if (!fs::real_path(config->osoPrefix, expanded,
-                       /*expand_tilde=*/true)) {
+    if (!llvm::sys::fs::real_path(config->osoPrefix, expanded,
+                                  /*expand_tilde=*/true)) {
       // Note: LD64 expands "." to be `<current_dir>/`
       // (ie., it has a slash suffix) whereas real_path() doesn't.
       // So we have to append '/' to be consistent.
@@ -2005,6 +2005,8 @@ static bool link(InputArgList &args, bool canExitEarly, raw_ostream &stdoutOS,
     exitLld(errorCount() ? 1 : 0);
 
   bool ret = errorCount() == 0;
-  errorHandler().reset();
+  // FIXME: Temporarily disable this since CAS path needs to use the handler
+  // after linking.
+  // errorHandler().reset();
   return ret;
 }
