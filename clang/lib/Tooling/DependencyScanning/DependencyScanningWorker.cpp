@@ -261,7 +261,7 @@ public:
     }
 
     // Always use the CAS token cache, regardless of the original command-line.
-    Compiler.getInvocation().getCASOpts().CASTokenCache |=
+    ScanInstance.getInvocation().getCASOpts().CASTokenCache |=
         OverrideCASTokenCache;
 
     // Consider different header search and diagnostic options to create
@@ -324,7 +324,7 @@ DependencyScanningWorker::DependencyScanningWorker(
         std::make_unique<ExcludedPreprocessorDirectiveSkipMapping>();
   if (Service.getMode() == ScanningMode::MinimizedSourcePreprocessing)
     DepFS =
-        new DependencyScanningWorkerFilesystem(ProxyFS, PPSkipMappings.get());
+        new DependencyScanningWorkerFilesystem(CacheFS, PPSkipMappings.get());
   if (Service.canReuseFileManager())
     Files = new FileManager(FileSystemOptions(), RealFS);
 }
@@ -376,7 +376,7 @@ llvm::Error DependencyScanningWorker::computeDependencies(
                       [&](DiagnosticConsumer &DC, DiagnosticOptions &DiagOpts) {
                         DependencyScanningAction Action(
                             WorkingDirectory, Consumer, DepFS,
-                            PPSkipMappings.get(), Format, OverrideCASTokenCache,
+                            PPSkipMappings.get(), OverrideCASTokenCache, Format,
                             OptimizeArgs, /*EmitDependencyFile=*/false,
                             ModuleName);
                         // Create an invocation that uses the underlying file

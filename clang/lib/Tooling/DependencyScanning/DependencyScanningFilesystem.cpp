@@ -209,7 +209,7 @@ DependencyScanningWorkerFilesystem::getOriginal(cas::CASID InputDataID) {
 ///
 /// This is kinda hacky, it would be better if we knew what kind of file Clang
 /// was expecting instead.
-static bool shouldMinimize(StringRef Filename) {
+static bool shouldMinimizeBasedOnExtension(StringRef Filename) {
   StringRef Ext = llvm::sys::path::extension(Filename);
   if (Ext.empty())
     return true; // C++ standard library
@@ -222,25 +222,28 @@ static bool shouldMinimize(StringRef Filename) {
     .Default(false);
 }
 
-
 static bool shouldCacheStatFailures(StringRef Filename) {
   StringRef Ext = llvm::sys::path::extension(Filename);
   if (Ext.empty())
     return false; // This may be the module cache directory.
-  return shouldMinimize(Filename); // Only cache stat failures on source files.
+  return shouldMinimizeBasedOnExtension(
+      Filename); // Only cache stat failures on source files.
 }
 
-void DependencyScanningWorkerFilesystem::ignoreFile(StringRef RawFilename) {
-  llvm::SmallString<256> Filename;
-  llvm::sys::path::native(RawFilename, Filename);
-  IgnoredFiles.insert(Filename);
-}
-
-bool DependencyScanningWorkerFilesystem::shouldIgnoreFile(
+void DependencyScanningWorkerFilesystem::disableMinimization(
     StringRef RawFilename) {
   llvm::SmallString<256> Filename;
   llvm::sys::path::native(RawFilename, Filename);
-  return IgnoredFiles.contains(Filename);
+  NotToBeMinimized.insert(Filename);
+}
+
+bool DependencyScanningWorkerFilesystem::shouldMinimize(StringRef RawFilename) {
+  if (!shouldMinimizeBasedOnExtension(RawFilename))
+    return false;
+
+  llvm::SmallString<256> Filename;
+  llvm::sys::path::native(RawFilename, Filename);
+  return !NotToBeMinimized.contains(Filename);
 }
 
 cas::CachingOnDiskFileSystem &
@@ -279,7 +282,7 @@ DependencyScanningWorkerFilesystem::lookupPath(const Twine &Path) {
 
   llvm::ErrorOr<StringRef> Buffer = std::error_code();
   llvm::Optional<llvm::cas::CASID> EffectiveID;
-  if (!shouldIgnoreFile(PathRef) && shouldMinimize(PathRef)) {
+  if (shouldMinimize(PathRef)) {
     Buffer = expectedToErrorOr(computeMinimized(*FileID, PathRef, EffectiveID));
   } else {
     Buffer = expectedToErrorOr(getOriginal(*FileID));

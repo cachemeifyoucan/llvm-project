@@ -155,20 +155,11 @@ private:
 }
 
 llvm::Expected<llvm::cas::TreeRef> DependencyScanningTool::getDependencyTree(
-    const tooling::CompilationDatabase &Compilations, StringRef CWD) {
-  // We expect a single command here because if a source file occurs multiple
-  // times in the original CDB, then `computeDependencies` would run the
-  // `DependencyScanningAction` once for every time the input occured in the
-  // CDB. Instead we split up the CDB into single command chunks to avoid this
-  // behavior.
-  assert(Compilations.getAllCompileCommands().size() == 1 &&
-         "Expected a compilation database with a single command!");
-  std::string Input = Compilations.getAllCompileCommands().front().Filename;
-
+    const std::vector<std::string> &CommandLine, StringRef CWD) {
   llvm::cas::CachingOnDiskFileSystem &FS = Worker.getRealFS();
   FS.trackNewAccesses();
   MakeDependencyTree Consumer(FS);
-  auto Result = Worker.computeDependencies(Input, CWD, Compilations, Consumer);
+  auto Result = Worker.computeDependencies(CWD, CommandLine, Consumer);
   if (Result)
     return std::move(Result);
   // return Consumer.makeTree();

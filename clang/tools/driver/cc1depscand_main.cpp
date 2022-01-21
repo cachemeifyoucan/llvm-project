@@ -368,8 +368,8 @@ int cc1depscand_main(ArrayRef<const char *> Argv, const char *Argv0,
   // Create the base directory if necessary.
   StringRef BaseDir = llvm::sys::path::parent_path(BasePath);
   if (std::error_code EC = llvm::sys::fs::create_directories(BaseDir))
-    llvm::report_fatal_error("clang -cc1depscand: cannot create basedir: " +
-                             EC.message());
+    llvm::report_fatal_error(
+        Twine("clang -cc1depscand: cannot create basedir: ") + EC.message());
 
   auto openAndReplaceFD = [&](int ReplacedFD, StringRef Path) {
     int FD;
