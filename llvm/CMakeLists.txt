@@ -624,6 +624,7 @@ option (LLVM_ENABLE_DOXYGEN "Use doxygen to generate llvm API documentation." OF
 option (LLVM_ENABLE_SPHINX "Use Sphinx to generate llvm documentation." OFF)
 option (LLVM_ENABLE_OCAMLDOC "Build OCaml bindings documentation." ON)
 option (LLVM_ENABLE_BINDINGS "Build bindings." ON)
+option (LLVM_ENABLE_ONDISK_CAS "Build OnDisk CAS." ON)
 
 set(LLVM_INSTALL_DOXYGEN_HTML_DIR "${CMAKE_INSTALL_DOCDIR}/llvm/doxygen-html"
     CACHE STRING "Doxygen-generated HTML documentation install directory")
@@ -1259,6 +1260,13 @@ if (LLVM_INCLUDE_BENCHMARKS)
   add_subdirectory(${LLVM_THIRD_PARTY_DIR}/benchmark 
     ${CMAKE_CURRENT_BINARY_DIR}/third-party/benchmark)
   add_subdirectory(benchmarks)
+endif()
+
+if (LLVM_ENABLE_ONDISK_CAS)
+  # Disable OnDisk CAS on windows and non-Unix systems.
+  if(WIN32 AND NOT UNIX)
+    set (LLVM_ENABLE_ONDISK_CAS OFF)
+  endif()
 endif()
 
 if (LLVM_INCLUDE_UTILS AND LLVM_INCLUDE_TOOLS)
