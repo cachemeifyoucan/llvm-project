@@ -14,6 +14,7 @@ add_llvm_component_library(LLVMCAS
   OnDiskCAS.cpp
   OnDiskHashMappedTrie.cpp
   PluginCAS.cpp
+  TreeSchema.cpp
   Utils.cpp
 
   ADDITIONAL_HEADER_DIRS

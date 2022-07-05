@@ -15,6 +15,7 @@ add_llvm_unittest(CASTests
   HierarchicalTreeBuilderTest.cpp
   OnDiskHashMappedTrieTest.cpp
   ThreadSafeAllocatorTest.cpp
+  TreeSchemaTest.cpp
   )
 
 target_link_libraries(CASTests PRIVATE LLVMTestingSupport)
