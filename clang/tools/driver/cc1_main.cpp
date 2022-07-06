@@ -34,6 +34,7 @@
 #include "llvm/CAS/CASFileSystem.h"
 #include "llvm/CAS/CASOutputBackend.h"
 #include "llvm/CAS/HierarchicalTreeBuilder.h"
+#include "llvm/CAS/TreeSchema.h"
 #include "llvm/CAS/Utils.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/LinkAllPasses.h"
@@ -456,7 +457,7 @@ void CompileJobCache::finishComputedResult(CompilerInstance &Clang,
   llvm::cas::HierarchicalTreeBuilder Builder;
   Builder.push(Outputs->getRef(), llvm::cas::TreeEntry::Regular, "outputs");
   Builder.push(Errs->getRef(), llvm::cas::TreeEntry::Regular, "stderr");
-  Expected<llvm::cas::TreeHandle> Result = Builder.create(*CAS);
+  Expected<llvm::cas::NodeHandle> Result = Builder.create(*CAS);
   if (!Result)
     llvm::report_fatal_error(Result.takeError());
   if (llvm::Error E =
@@ -477,8 +478,8 @@ Optional<int> CompileJobCache::replayCachedResult(llvm::cas::ObjectRef ResultID,
     return None;
 
   // FIXME: Stop calling report_fatal_error().
-  Optional<llvm::cas::TreeProxy> Result;
-  if (Error E = CAS->loadTree(ResultID).moveInto(Result))
+  Optional<llvm::cas::TreeNodeProxy> Result;
+  if (Error E = llvm::cas::TreeSchema(*CAS).loadTree(ResultID).moveInto(Result))
     llvm::report_fatal_error(std::move(E));
 
   // Replay diagnostics to stderr.

@@ -505,12 +505,12 @@ static Error addCASTree(ObjectFormatSchemaPool &CASSchemas, CASID ID) {
   Optional<cas::ObjectRef> Object = CASSchemas.getCAS().getReference(ID);
   if (!Object)
     return createStringError(inconvertibleErrorCode(), "unknown tree root");
-  Expected<cas::TreeProxy> Tree = CASSchemas.getCAS().loadTree(*Object);
+  Expected<cas::NodeProxy> Tree = CASSchemas.getCAS().loadNode(*Object);
   if (!Tree)
     return Tree.takeError();
   return walkFileTreeRecursively(
       CASSchemas.getCAS(), *Tree,
-      [&](const NamedTreeEntry &entry, Optional<TreeProxy>) -> Error {
+      [&](const NamedTreeEntry &entry, Optional<NodeProxy>) -> Error {
         if (entry.getKind() == TreeEntry::Tree)
           return Error::success();
         if (entry.getKind() != TreeEntry::Regular) {
@@ -1363,7 +1363,7 @@ static bool linkWithResultCaching(InputArgList &args, bool canExitEarly,
   CASDB &CAS = *config->CAS;
 
   Optional<CASID> optCacheKey;
-  Optional<TreeProxy> rootRef;
+  Optional<NodeProxy> rootRef;
   {
     TimeTraceScope timeScope("Caching: create key");
 

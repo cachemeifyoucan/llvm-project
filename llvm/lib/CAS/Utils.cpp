@@ -9,6 +9,7 @@
 #include "llvm/CAS/Utils.h"
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/CAS/CASDB.h"
+#include "llvm/CAS/TreeSchema.h"
 // FIXME: It's layer violation including this (libLLVMCAS should not depend on
 // headers of libLLVMCASObjectFormats) but 'Encoding.h' itself should really
 // move to libLLVMSupport.
@@ -50,12 +51,13 @@ void cas::writeCASIDBuffer(const CASID &ID, llvm::raw_ostream &OS) {
 }
 
 Error cas::walkFileTreeRecursively(
-    CASDB &CAS, const TreeHandle &Root,
-    function_ref<Error(const NamedTreeEntry &, Optional<TreeProxy>)> Callback) {
+    CASDB &CAS, const ObjectHandle &Root,
+    function_ref<Error(const NamedTreeEntry &, Optional<NodeProxy>)> Callback) {
   BumpPtrAllocator Alloc;
   StringSaver Saver(Alloc);
   SmallString<128> PathStorage;
   SmallVector<NamedTreeEntry> Stack;
+  TreeSchema Schema(CAS);
   Stack.emplace_back(CAS.getReference(Root), TreeEntry::Tree, "/");
 
   while (!Stack.empty()) {
@@ -66,10 +68,10 @@ Error cas::walkFileTreeRecursively(
     }
 
     NamedTreeEntry Parent = Stack.pop_back_val();
-    Expected<TreeProxy> ExpTree = CAS.loadTree(Parent.getRef());
+    Expected<TreeNodeProxy> ExpTree = Schema.loadTree(Parent.getRef());
     if (Error E = ExpTree.takeError())
       return E;
-    TreeProxy Tree = *ExpTree;
+    TreeNodeProxy Tree = *ExpTree;
     if (Error E = Callback(Parent, Tree))
       return E;
     for (int I = Tree.size(), E = 0; I != E; --I) {

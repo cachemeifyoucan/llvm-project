@@ -65,17 +65,18 @@ void HierarchicalTreeBuilder::pushTreeContent(ObjectRef Ref,
   TreeContents.emplace_back(Ref, Kind, canonicalize(CanonicalPath, Kind));
 }
 
-Expected<TreeHandle> HierarchicalTreeBuilder::create(CASDB &CAS) {
+Expected<NodeHandle> HierarchicalTreeBuilder::create(CASDB &CAS) {
   // FIXME: It is inefficient expanding the whole tree recursively like this,
   // use a more efficient algorithm to merge contents.
+  TreeSchema Schema(CAS);
   for (const auto &TreeContent : TreeContents) {
-    Optional<TreeProxy> LoadedTree;
-    if (Error E = CAS.loadTree(*TreeContent.getRef()).moveInto(LoadedTree))
+    Optional<ObjectHandle> LoadedTree;
+    if (Error E = CAS.loadObject(*TreeContent.getRef()).moveInto(LoadedTree))
       return std::move(E);
     StringRef Path = TreeContent.getPath();
     Error E = walkFileTreeRecursively(
         CAS, *LoadedTree,
-        [&](const NamedTreeEntry &Entry, Optional<TreeProxy> Tree) -> Error {
+        [&](const NamedTreeEntry &Entry, Optional<NodeProxy> Tree) -> Error {
           if (Entry.getKind() != TreeEntry::Tree) {
             pushImpl(Entry.getRef(), Entry.getKind(), Path + Entry.getName());
             return Error::success();
@@ -90,7 +91,7 @@ Expected<TreeHandle> HierarchicalTreeBuilder::create(CASDB &CAS) {
   TreeContents.clear();
 
   if (Entries.empty())
-    return CAS.createTree();
+    return Schema.storeTree();
 
   std::stable_sort(
       Entries.begin(), Entries.end(),
@@ -250,12 +251,12 @@ Expected<TreeHandle> HierarchicalTreeBuilder::create(CASDB &CAS) {
     Worklist.pop_back();
     for (Node *N = T->First; N; N = N->Next)
       Entries.emplace_back(*N->Ref, N->Kind, N->Name);
-    Expected<TreeProxy> ExpectedTree = CAS.createTree(Entries);
+    Expected<TreeNodeProxy> ExpectedTree = Schema.storeTree(Entries);
     Entries.clear();
     if (!ExpectedTree)
       return ExpectedTree.takeError();
     T->Ref = ExpectedTree->getRef();
   }
 
-  return cantFail(CAS.loadObject(*Root.Ref)).get<TreeHandle>();
+  return cantFail(CAS.loadObject(*Root.Ref)).get<NodeHandle>();
 }

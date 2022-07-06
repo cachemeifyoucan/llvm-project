@@ -9,6 +9,7 @@
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/CAS/HierarchicalTreeBuilder.h"
+#include "llvm/CAS/TreeSchema.h"
 #include "llvm/CAS/Utils.h"
 #include "llvm/CASObjectFormats/CASObjectReader.h"
 #include "llvm/CASObjectFormats/FlatV1.h"
@@ -238,7 +239,8 @@ int main(int argc, char *argv[]) {
 
     case IngestFromCASTree: {
       auto ID = ExitOnErr(CAS->parseID(IF));
-      auto Root = ExitOnErr(CAS->getTree(ID));
+      auto Root = ExitOnErr(CAS->getNode(ID));
+      TreeSchema Schema(*CAS);
       SmallVector<NamedTreeEntry> Stack;
       Stack.emplace_back(CAS->getReference(Root), TreeEntry::Tree, "/");
       Optional<GlobPattern> GlobP;
@@ -269,7 +271,8 @@ int main(int argc, char *argv[]) {
           ExitOnErr(createStringError(inconvertibleErrorCode(),
                                       "unexpected CAS kind in the tree"));
 
-        TreeProxy Tree = ExitOnErr(CAS->loadTree(Node.getRef()));
+        NodeProxy TreeN = ExitOnErr(CAS->loadNode(Node.getRef()));
+        TreeNodeProxy Tree = ExitOnErr(Schema.loadTree(TreeN));
         ExitOnErr(Tree.forEachEntry([&](const NamedTreeEntry &Entry) {
           SmallString<128> PathStorage = Node.getName();
           sys::path::append(PathStorage, sys::path::Style::posix,
@@ -470,10 +473,12 @@ void StatCollector::visitPOTItem(ExitOnError &ExitOnErr, const POTItem &Item) {
   };
 
   size_t NumParents = Nodes.lookup(ID).NumParents;
-  if (auto TreeH = Object->dyn_cast<TreeHandle>()) {
+  TreeSchema Schema(CAS);
+  auto TreeH = Object->get<NodeHandle>();
+  if (Schema.isNode(TreeH)) {
     auto &Info = Stats["builtin:tree"];
     ++Info.Count;
-    TreeProxy Tree = TreeProxy::load(CAS, *TreeH);
+    TreeNodeProxy Tree = ExitOnErr(Schema.loadTree(TreeH));
     Info.NumChildren += Tree.size();
     Info.NumParents += NumParents;
     Info.NumPaths += NumPaths;
@@ -680,8 +685,11 @@ static void computeStats(CASDB &CAS, ArrayRef<CASID> TopLevels,
       continue;
     }
 
-    if (auto Tree = Object->dyn_cast<TreeHandle>()) {
-      ExitOnErr(CAS.forEachTreeEntry(*Tree, [&](const NamedTreeEntry &Entry) {
+    TreeSchema TSchema(CAS);
+    NodeHandle NodeH = Object->get<NodeHandle>();
+    if (TSchema.isNode(NodeH)) {
+      TreeNodeProxy Tree = ExitOnErr(TSchema.loadTree(NodeH));
+      ExitOnErr(Tree.forEachEntry([&](const NamedTreeEntry &Entry) {
         SmallString<128> PathStorage = Name;
         sys::path::append(PathStorage, sys::path::Style::posix,
                           Entry.getName());
@@ -821,7 +829,7 @@ static Error printCASObject(ObjectFormatSchemaPool &Pool, CASID ID, bool omitCAS
 }
 
 static Error printCASObjectOrTree(ObjectFormatSchemaPool &Pool, CASID ID, bool omitCASID) {
-  Expected<TreeProxy> ExpTree = Pool.getCAS().getTree(ID);
+  Expected<NodeProxy> ExpTree = Pool.getCAS().getNode(ID);
   if (Error E = ExpTree.takeError()) {
     // Not a tree.
     return printCASObject(Pool, ID, omitCASID);
@@ -829,7 +837,7 @@ static Error printCASObjectOrTree(ObjectFormatSchemaPool &Pool, CASID ID, bool o
 
   return walkFileTreeRecursively(
       Pool.getCAS(), *ExpTree,
-      [&](const NamedTreeEntry &entry, Optional<TreeProxy>) -> Error {
+      [&](const NamedTreeEntry &entry, Optional<NodeProxy>) -> Error {
         if (entry.getKind() == TreeEntry::Tree)
           return Error::success();
         if (entry.getKind() != TreeEntry::Regular) {
@@ -842,13 +850,13 @@ static Error printCASObjectOrTree(ObjectFormatSchemaPool &Pool, CASID ID, bool o
 }
 
 static Error materializeObjectsFromCASTree(CASDB &CAS, CASID ID) {
-  Expected<TreeProxy> ExpTree = CAS.getTree(ID);
+  Expected<NodeProxy> ExpTree = CAS.getNode(ID);
   if (!ExpTree)
     return ExpTree.takeError();
 
   return walkFileTreeRecursively(
       CAS, *ExpTree,
-      [&](const NamedTreeEntry &Entry, Optional<TreeProxy>) -> Error {
+      [&](const NamedTreeEntry &Entry, Optional<NodeProxy>) -> Error {
         if (Entry.getKind() != TreeEntry::Regular &&
             Entry.getKind() != TreeEntry::Tree) {
           return createStringError(inconvertibleErrorCode(),
@@ -993,7 +1001,7 @@ static ObjectRef ingestFile(ObjectFormatSchemaBase &Schema, StringRef InputFile,
     // Create a map for each symbol in TEXT.
     jitlink::Section *Text = G->findSectionByName("__TEXT,__text");
     if (!Text)
-      return CAS.getReference(ExitOnErr(CAS.storeTree(None)));
+      return CAS.getReference(ExitOnErr(TreeSchema(CAS).storeTree()));
 
     auto MapFile = ExitOnErr(sys::fs::TempFile::create("/tmp/debug-%%%%%%%%.map"));
     auto DsymFile =

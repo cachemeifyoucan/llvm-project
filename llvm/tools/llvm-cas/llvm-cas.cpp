@@ -11,6 +11,7 @@
 #include "llvm/CAS/CASFileSystem.h"
 #include "llvm/CAS/CachingOnDiskFileSystem.h"
 #include "llvm/CAS/HierarchicalTreeBuilder.h"
+#include "llvm/CAS/TreeSchema.h"
 #include "llvm/CAS/Utils.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
@@ -184,7 +185,9 @@ int main(int Argc, char **Argv) {
 int listTree(CASDB &CAS, CASID ID) {
   ExitOnError ExitOnErr("llvm-cas: ls-tree: ");
 
-  TreeProxy Tree = ExitOnErr(CAS.getTree(ID));
+  TreeSchema Schema(CAS);
+  NodeProxy TreeN = ExitOnErr(CAS.getNode(ID));
+  TreeNodeProxy Tree = ExitOnErr(Schema.loadTree(TreeN));
   ExitOnErr(Tree.forEachEntry([&](const NamedTreeEntry &Entry) {
     Entry.print(llvm::outs(), CAS);
     return Error::success();
@@ -196,8 +199,8 @@ int listTree(CASDB &CAS, CASID ID) {
 int listTreeRecursively(CASDB &CAS, CASID ID) {
   ExitOnError ExitOnErr("llvm-cas: ls-tree-recursively: ");
   ExitOnErr(walkFileTreeRecursively(
-      CAS, ExitOnErr(CAS.getTree(ID)),
-      [&](const NamedTreeEntry &Entry, Optional<TreeProxy> Tree) -> Error {
+      CAS, ExitOnErr(CAS.getNode(ID)),
+      [&](const NamedTreeEntry &Entry, Optional<NodeProxy> Tree) -> Error {
         if (Entry.getKind() != TreeEntry::Tree) {
           Entry.print(llvm::outs(), CAS);
           return Error::success();
@@ -247,10 +250,10 @@ int catNodeData(CASDB &CAS, CASID ID) {
   return 0;
 }
 
-static StringRef getKindString(AnyObjectHandle Object) {
-  if (Object.is<TreeHandle>())
-    return "tree";
+static StringRef getKindString(CASDB &CAS, AnyObjectHandle Object) {
   assert(Object.is<NodeHandle>());
+  if (TreeSchema(CAS).isNode(Object.get<NodeHandle>()))
+    return "tree";
   return "node";
 }
 
@@ -260,7 +263,7 @@ int printKind(CASDB &CAS, CASID ID) {
   if (!Object)
     ExitOnErr(createStringError(inconvertibleErrorCode(), "unknown object"));
 
-  llvm::outs() << getKindString(*Object) << "\n";
+  llvm::outs() << getKindString(CAS, *Object) << "\n";
   return 0;
 }
 
@@ -324,15 +327,17 @@ static GraphInfo traverseObjectGraph(CASDB &CAS, CASID TopLevel) {
     if (!Object)
       continue;
 
-    if (auto Tree = Object->dyn_cast<TreeHandle>()) {
-      ExitOnErr(CAS.forEachTreeEntry(*Tree, [&](const NamedTreeEntry &Entry) {
+    auto Node = Object->get<NodeHandle>();
+    TreeSchema Schema(CAS);
+    if (Schema.isNode(Node)) {
+      TreeNodeProxy Tree = ExitOnErr(Schema.loadTree(Node));
+      ExitOnErr(Tree.forEachEntry([&](const NamedTreeEntry &Entry) {
         push(CAS.getObjectID(Entry.getRef()));
         return Error::success();
       }));
       continue;
     }
 
-    auto Node = Object->get<NodeHandle>();
     ExitOnErr(CAS.forEachRef(Node, [&](ObjectRef Ref) {
       push(CAS.getObjectID(Ref));
       return Error::success();
@@ -352,7 +357,7 @@ static void printDiffs(CASDB &CAS, const GraphInfo &Baseline,
 
     StringRef KindString;
     if (Optional<AnyObjectHandle> Object = ExitOnErr(CAS.loadObject(ID)))
-      KindString = getKindString(*Object);
+      KindString = getKindString(CAS, *Object);
 
     outs() << llvm::formatv("{0}{1,-4} {2}\n", NewName, KindString, ID);
   }
@@ -396,7 +401,7 @@ static Error recursiveAccess(CachingOnDiskFileSystem &FS, StringRef Path) {
   return Error::success();
 }
 
-static Expected<TreeProxy> ingestFileSystemImpl(CASDB &CAS, StringRef Path) {
+static Expected<NodeProxy> ingestFileSystemImpl(CASDB &CAS, StringRef Path) {
   auto FS = createCachingOnDiskFileSystem(CAS);
   if (!FS)
     return FS.takeError();

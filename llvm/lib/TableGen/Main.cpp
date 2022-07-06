@@ -22,6 +22,7 @@
 #include "llvm/CAS/CASFileSystem.h"
 #include "llvm/CAS/CachingOnDiskFileSystem.h"
 #include "llvm/CAS/HierarchicalTreeBuilder.h"
+#include "llvm/CAS/TreeSchema.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
@@ -360,7 +361,7 @@ Error TableGenCache::createAction(ArrayRef<const char *> Args) {
   Builder.push(*MainFileID, cas::TreeEntry::Regular, "input");
   Builder.push(*ExecutableID, cas::TreeEntry::Regular, "executable");
   Builder.push(*CommandLineID, cas::TreeEntry::Regular, "command-line");
-  Expected<cas::TreeHandle> Tree = Builder.create(*CAS);
+  Expected<cas::NodeHandle> Tree = Builder.create(*CAS);
   if (!Tree)
     return Tree.takeError();
   ActionID = CAS->getReference(*Tree);
@@ -475,7 +476,7 @@ Error TableGenCache::computeResult(TableGenMainFn *MainFn) {
     if (Error E = addFile("stderr", Diags.OS.str()))
       return E;
 
-  Expected<cas::TreeHandle> Tree = Builder.create(*CAS);
+  Expected<cas::NodeHandle> Tree = Builder.create(*CAS);
   if (!Tree)
     return Tree.takeError();
   return CAS->putCachedResult(CAS->getObjectID(*ActionID),
@@ -485,7 +486,12 @@ Error TableGenCache::computeResult(TableGenMainFn *MainFn) {
 Error TableGenCache::replayResult() {
   assert(ResultID && "Need a result!");
 
-  Expected<cas::TreeProxy> Tree = CAS->loadTree(*ResultID);
+  Expected<cas::NodeProxy> Node = CAS->loadNode(*ResultID);
+  if (!Node)
+    return Node.takeError();
+
+  llvm::cas::TreeSchema Schema(*CAS);
+  Expected<cas::TreeNodeProxy> Tree = Schema.loadTree(*Node);
   if (!Tree)
     return Tree.takeError();
 

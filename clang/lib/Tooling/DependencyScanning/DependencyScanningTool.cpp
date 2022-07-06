@@ -139,7 +139,7 @@ public:
 
   void handleContextHash(std::string) override {}
 
-  Expected<llvm::cas::TreeProxy> makeTree() {
+  Expected<llvm::cas::NodeProxy> makeTree() {
     if (E)
       return std::move(E);
     return Builder->create();
@@ -159,7 +159,7 @@ private:
 };
 }
 
-llvm::Expected<llvm::cas::TreeProxy> DependencyScanningTool::getDependencyTree(
+llvm::Expected<llvm::cas::NodeProxy> DependencyScanningTool::getDependencyTree(
     const std::vector<std::string> &CommandLine, StringRef CWD) {
   llvm::cas::CachingOnDiskFileSystem &FS = Worker.getCASFS();
   FS.trackNewAccesses();
@@ -180,7 +180,7 @@ llvm::Expected<llvm::cas::TreeProxy> DependencyScanningTool::getDependencyTree(
   return FS.createTreeFromNewAccesses();
 }
 
-llvm::Expected<llvm::cas::TreeProxy>
+llvm::Expected<llvm::cas::NodeProxy>
 DependencyScanningTool::getDependencyTreeFromCompilerInvocation(
     std::shared_ptr<CompilerInvocation> Invocation, StringRef CWD,
     DiagnosticConsumer &DiagsConsumer,

@@ -227,7 +227,7 @@ Expected<ScanIncludesResult> tablegen::scanIncludes(
     PM->sort();
   }
 
-  Expected<cas::TreeProxy> Tree = FS->createTreeFromNewAccesses(
+  Expected<cas::NodeProxy> Tree = FS->createTreeFromNewAccesses(
       [&](const vfs::CachedDirectoryEntry &Entry) {
         return PM ? PM->map(Entry) : Entry.getTreePath();
       });

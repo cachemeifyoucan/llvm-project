@@ -10,6 +10,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/CAS/CASDB.h"
 #include "llvm/CAS/FileSystemCache.h"
+#include "llvm/CAS/TreeSchema.h"
 #include "llvm/Support/AlignOf.h"
 #include "llvm/Support/Allocator.h"
 
@@ -182,19 +183,25 @@ Error CASFileSystem::loadDirectory(DirectoryEntry &Parent) {
   Expected<AnyObjectHandle> Object = DB.loadObject(*Parent.getRef());
   if (!Object)
     return Object.takeError();
-  Optional<TreeHandle> TreeH = Object->dyn_cast<TreeHandle>();
-  if (!TreeH)
+
+  TreeSchema Schema(DB);
+  NodeHandle TreeH = Object->get<NodeHandle>();
+  if (!Schema.isNode(TreeH))
     report_fatal_error(createStringError(
         inconvertibleErrorCode(),
         "invalid tree '" + DB.getObjectID(*Object).toString() + "'"));
 
   // Lock and check for a race.
-  TreeProxy Tree = TreeProxy::load(DB, *TreeH);
+  NodeProxy TreeN = NodeProxy::load(DB, TreeH);
   Directory::Writer W(D);
   if (D.isComplete())
     return Error::success();
 
-  if (Error E = Tree.forEachEntry([&](const NamedTreeEntry &NewEntry) {
+  Expected<TreeNodeProxy> Tree = Schema.loadTree(TreeN);
+  if (!Tree)
+    return Tree.takeError();
+
+  if (Error E = Tree->forEachEntry([&](const NamedTreeEntry &NewEntry) {
         D.add(makeCachedEntry(NewEntry));
         return Error::success();
       }))

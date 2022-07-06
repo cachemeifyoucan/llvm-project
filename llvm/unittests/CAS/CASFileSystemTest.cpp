@@ -47,11 +47,12 @@ static ObjectRef createBlobUnchecked(CASDB &CAS, StringRef Content) {
       llvm::cantFail(CAS.storeNodeFromString(None, Content)));
 }
 
-static Expected<TreeHandle> createEmptyTree(CASDB &CAS) {
-  return CAS.storeTree(None);
+static Expected<NodeHandle> createEmptyTree(CASDB &CAS) {
+  HierarchicalTreeBuilder Builder;
+  return Builder.create(CAS);
 }
 
-static Expected<TreeHandle> createFlatTree(CASDB &CAS) {
+static Expected<NodeHandle> createFlatTree(CASDB &CAS) {
   HierarchicalTreeBuilder Builder;
   Builder.push(createBlobUnchecked(CAS, "1"), TreeEntry::Regular, "file1");
   Builder.push(createBlobUnchecked(CAS, "1"), TreeEntry::Regular, "1");
@@ -59,7 +60,7 @@ static Expected<TreeHandle> createFlatTree(CASDB &CAS) {
   return Builder.create(CAS);
 }
 
-static Expected<TreeHandle> createNestedTree(CASDB &CAS) {
+static Expected<NodeHandle> createNestedTree(CASDB &CAS) {
   ObjectRef Data1 = createBlobUnchecked(CAS, "blob1");
   ObjectRef Data2 = createBlobUnchecked(CAS, "blob2");
   ObjectRef Data3 = createBlobUnchecked(CAS, "blob3");
@@ -74,7 +75,7 @@ static Expected<TreeHandle> createNestedTree(CASDB &CAS) {
   return Builder.create(CAS);
 }
 
-static Expected<TreeHandle> createSymlinksTree(CASDB &CAS) {
+static Expected<NodeHandle> createSymlinksTree(CASDB &CAS) {
   auto make = [&](StringRef Bytes) { return createBlobUnchecked(CAS, Bytes); };
 
   HierarchicalTreeBuilder Builder;
@@ -94,7 +95,7 @@ static Expected<TreeHandle> createSymlinksTree(CASDB &CAS) {
   return Builder.create(CAS);
 }
 
-static Expected<TreeHandle> createSymlinkLoopsTree(CASDB &CAS) {
+static Expected<NodeHandle> createSymlinkLoopsTree(CASDB &CAS) {
   auto make = [&](StringRef Bytes) { return createBlobUnchecked(CAS, Bytes); };
 
   HierarchicalTreeBuilder Builder;
@@ -108,7 +109,7 @@ static Expected<TreeHandle> createSymlinkLoopsTree(CASDB &CAS) {
 }
 
 static Expected<std::unique_ptr<vfs::FileSystem>>
-createFS(CASDB &CAS, Expected<TreeHandle> Tree) {
+createFS(CASDB &CAS, Expected<NodeHandle> Tree) {
   if (!Tree)
     return Tree.takeError();
   return createCASFileSystem(CAS, CAS.getObjectID(*Tree));

@@ -451,6 +451,8 @@ public:
   /// Get the content of the node. Valid as long as the CAS is valid.
   StringRef getData() const { return Data; }
 
+  // Empty but valid tree node only have 1 reference.
+  bool empty() const { return NumReferences == 1; }
 protected:
   /// FIXME: Remove once LeafNodeProxy doesn't need this.
   const StringRef *getDataPtr() const { return &Data; }

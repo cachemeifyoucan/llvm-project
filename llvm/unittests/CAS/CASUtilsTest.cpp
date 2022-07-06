@@ -27,7 +27,7 @@ TEST(CASUtilsTest, walkFileTreeRecursively) {
   Builder.push(make("blob1"), TreeEntry::Regular, "/t1/d1");
   Builder.push(make("blob3"), TreeEntry::Regular, "/t3/d3");
   Builder.push(make("blob1"), TreeEntry::Regular, "/t3/t1nested/d1");
-  Optional<TreeHandle> Root;
+  Optional<NodeHandle> Root;
   ASSERT_THAT_ERROR(Builder.create(*CAS).moveInto(Root), Succeeded());
 
   std::pair<std::string, bool> ExpectedEntries[] = {
@@ -44,7 +44,7 @@ TEST(CASUtilsTest, walkFileTreeRecursively) {
 
   Error E = walkFileTreeRecursively(
       *CAS, *Root,
-      [&](const NamedTreeEntry &Entry, Optional<TreeProxy> Tree) -> Error {
+      [&](const NamedTreeEntry &Entry, Optional<NodeProxy> Tree) -> Error {
         if (RemainingEntries.empty())
           return createStringError(inconvertibleErrorCode(),
                                    "unexpected entry: '" + Entry.getName() +

@@ -37,4 +37,4 @@ COMPLEX-KIND: node
 COMPLEX-DATA: content
 
 RUN: not llvm-cas --cas  %t/cas --ls-tree @%t/complex.casid 2>&1 | FileCheck %s --check-prefix=CHECK-WRONG-TYPE
-CHECK-WRONG-TYPE: llvm-cas: ls-tree: wrong object kind
+CHECK-WRONG-TYPE: llvm-cas: ls-tree: not a tree object
