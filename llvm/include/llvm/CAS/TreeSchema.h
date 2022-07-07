@@ -30,17 +30,26 @@ public:
 
   TreeSchema(CASDB &CAS);
 
-  // Tree Schema.
-  CASID getKindID();
-
   size_t getNumTreeEntries(TreeNodeProxy Tree) const;
 
   Error
   forEachTreeEntry(TreeNodeProxy Tree,
                    function_ref<Error(const NamedTreeEntry &)> Callback) const;
 
-  Optional<size_t> lookupTreeEntry(TreeNodeProxy Tree, StringRef Name) const;
+  /// Visit each file entry in order, returning an error from \p Callback to
+  /// stop early.
+  ///
+  /// The \p NamedTreeEntry, that the \p Callback receives, points to a name
+  /// string that may not live beyond the return of the callback function.
+  ///
+  /// Passes the \p TreeNodeProxy if the entry is a \p TreeEntry::Tree,
+  /// otherwise passes \p None.
+  Error walkFileTreeRecursively(
+      CASDB &CAS, const ObjectHandle &Root,
+      function_ref<Error(const NamedTreeEntry &, Optional<TreeNodeProxy>)>
+          Callback);
 
+  Optional<size_t> lookupTreeEntry(TreeNodeProxy Tree, StringRef Name) const;
   NamedTreeEntry loadTreeEntry(TreeNodeProxy Tree, size_t I) const;
 
   Expected<TreeNodeProxy> loadTree(ObjectRef Object) const;
@@ -48,11 +57,14 @@ public:
 
   Expected<TreeNodeProxy> storeTree(ArrayRef<NamedTreeEntry> Entries = None);
 
-  Expected<ObjectRef> storeTreeNodeName(StringRef Name);
-
 private:
   static constexpr StringLiteral SchemaName = "llvm::cas::schema::tree::v1";
   Optional<CASID> TreeKindID;
+
+  friend class TreeNodeProxy;
+
+  CASID getKindID();
+  Expected<ObjectRef> storeTreeNodeName(StringRef Name);
 };
 
 class TreeNodeProxy : public NodeProxy {

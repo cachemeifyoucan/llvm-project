@@ -198,9 +198,9 @@ int listTree(CASDB &CAS, CASID ID) {
 
 int listTreeRecursively(CASDB &CAS, CASID ID) {
   ExitOnError ExitOnErr("llvm-cas: ls-tree-recursively: ");
-  ExitOnErr(walkFileTreeRecursively(
+  ExitOnErr(TreeSchema(CAS).walkFileTreeRecursively(
       CAS, ExitOnErr(CAS.getNode(ID)),
-      [&](const NamedTreeEntry &Entry, Optional<NodeProxy> Tree) -> Error {
+      [&](const NamedTreeEntry &Entry, Optional<TreeNodeProxy> Tree) -> Error {
         if (Entry.getKind() != TreeEntry::Tree) {
           Entry.print(llvm::outs(), CAS);
           return Error::success();

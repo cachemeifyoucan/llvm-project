@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CAS/CASDB.h"
+#include "llvm/CAS/HierarchicalTreeBuilder.h"
 #include "llvm/CAS/TreeSchema.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/FileSystem.h"
@@ -221,4 +222,47 @@ TEST(TreeSchemaTest, Lookup) {
   CheckEntry("e");
   CheckEntry("f");
   ASSERT_FALSE(Tree->lookup("h"));
+}
+
+TEST(TreeSchemaTest, walkFileTreeRecursively) {
+  std::unique_ptr<CASDB> CAS = createInMemoryCAS();
+
+  auto make = [&](StringRef Content) {
+    return CAS->getReference(cantFail(CAS->storeNodeFromString(None, Content)));
+  };
+
+  HierarchicalTreeBuilder Builder;
+  Builder.push(make("blob2"), TreeEntry::Regular, "/d2");
+  Builder.push(make("blob1"), TreeEntry::Regular, "/t1/d1");
+  Builder.push(make("blob3"), TreeEntry::Regular, "/t3/d3");
+  Builder.push(make("blob1"), TreeEntry::Regular, "/t3/t1nested/d1");
+  Optional<NodeHandle> Root;
+  ASSERT_THAT_ERROR(Builder.create(*CAS).moveInto(Root), Succeeded());
+
+  std::pair<std::string, bool> ExpectedEntries[] = {
+      {"/", true},
+      {"/d2", false},
+      {"/t1", true},
+      {"/t1/d1", false},
+      {"/t3", true},
+      {"/t3/d3", false},
+      {"/t3/t1nested", true},
+      {"/t3/t1nested/d1", false},
+  };
+  auto RemainingEntries = makeArrayRef(ExpectedEntries);
+
+  Error E = TreeSchema(*CAS).walkFileTreeRecursively(
+      *CAS, *Root,
+      [&](const NamedTreeEntry &Entry, Optional<TreeNodeProxy> Tree) -> Error {
+        if (RemainingEntries.empty())
+          return createStringError(inconvertibleErrorCode(),
+                                   "unexpected entry: '" + Entry.getName() +
+                                       "'");
+        auto ExpectedEntry = RemainingEntries.front();
+        RemainingEntries = RemainingEntries.drop_front();
+        EXPECT_EQ(ExpectedEntry.first, Entry.getName());
+        EXPECT_EQ(ExpectedEntry.second, Tree.hasValue());
+        return Error::success();
+      });
+  EXPECT_THAT_ERROR(std::move(E), Succeeded());
 }

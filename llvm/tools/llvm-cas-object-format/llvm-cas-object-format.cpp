@@ -835,9 +835,9 @@ static Error printCASObjectOrTree(ObjectFormatSchemaPool &Pool, CASID ID, bool o
     return printCASObject(Pool, ID, omitCASID);
   }
 
-  return walkFileTreeRecursively(
+  return TreeSchema(Pool.getCAS()).walkFileTreeRecursively(
       Pool.getCAS(), *ExpTree,
-      [&](const NamedTreeEntry &entry, Optional<NodeProxy>) -> Error {
+      [&](const NamedTreeEntry &entry, Optional<TreeNodeProxy>) -> Error {
         if (entry.getKind() == TreeEntry::Tree)
           return Error::success();
         if (entry.getKind() != TreeEntry::Regular) {
@@ -854,9 +854,9 @@ static Error materializeObjectsFromCASTree(CASDB &CAS, CASID ID) {
   if (!ExpTree)
     return ExpTree.takeError();
 
-  return walkFileTreeRecursively(
+  return TreeSchema(CAS).walkFileTreeRecursively(
       CAS, *ExpTree,
-      [&](const NamedTreeEntry &Entry, Optional<NodeProxy>) -> Error {
+      [&](const NamedTreeEntry &Entry, Optional<TreeNodeProxy>) -> Error {
         if (Entry.getKind() != TreeEntry::Regular &&
             Entry.getKind() != TreeEntry::Tree) {
           return createStringError(inconvertibleErrorCode(),

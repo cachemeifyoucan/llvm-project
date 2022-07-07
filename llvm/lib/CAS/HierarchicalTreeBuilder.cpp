@@ -74,9 +74,10 @@ Expected<NodeHandle> HierarchicalTreeBuilder::create(CASDB &CAS) {
     if (Error E = CAS.loadObject(*TreeContent.getRef()).moveInto(LoadedTree))
       return std::move(E);
     StringRef Path = TreeContent.getPath();
-    Error E = walkFileTreeRecursively(
+    Error E = Schema.walkFileTreeRecursively(
         CAS, *LoadedTree,
-        [&](const NamedTreeEntry &Entry, Optional<NodeProxy> Tree) -> Error {
+        [&](const NamedTreeEntry &Entry,
+            Optional<TreeNodeProxy> Tree) -> Error {
           if (Entry.getKind() != TreeEntry::Tree) {
             pushImpl(Entry.getRef(), Entry.getKind(), Path + Entry.getName());
             return Error::success();
