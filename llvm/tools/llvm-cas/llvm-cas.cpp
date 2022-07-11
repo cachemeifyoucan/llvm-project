@@ -15,12 +15,14 @@
 #include "llvm/CAS/Utils.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/PrefixMapper.h"
 #include "llvm/Support/StringSaver.h"
+#include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include <memory>
 #include <system_error>
@@ -33,6 +35,8 @@ static cl::opt<bool> AllTrees("all-trees",
 static cl::list<std::string> PrefixMapPaths(
     "prefix-map",
     cl::desc("prefix map for file system ingestion, -prefix-map BEFORE=AFTER"));
+static cl::opt<bool> TestInMemory("test-in-memory",
+                                  cl::desc("Test in memory CAS"));
 
 static int dump(CASDB &CAS);
 static int listTree(CASDB &CAS, CASID ID);
@@ -49,6 +53,8 @@ static int ingestFileSystem(CASDB &CAS, StringRef Path);
 static int mergeTrees(CASDB &CAS, ArrayRef<std::string> Objects);
 static int getCASIDForFile(CASDB &CAS, CASID ID, StringRef Path);
 static int validateObject(CASDB &CAS, CASID ID);
+
+static int benchmarkTree(StringRef DataPath);
 
 int main(int Argc, char **Argv) {
   InitLLVM X(Argc, Argv);
@@ -77,6 +83,7 @@ int main(int Argc, char **Argv) {
     MergeTrees,
     GetCASIDForFile,
     Validate,
+    BenchmarkTree,
   };
   cl::opt<CommandKind> Command(
       cl::desc("choose command action:"),
@@ -96,7 +103,8 @@ int main(int Argc, char **Argv) {
           clEnumValN(IngestFileSystem, "ingest", "ingest file system"),
           clEnumValN(MergeTrees, "merge", "merge paths/cas-ids"),
           clEnumValN(GetCASIDForFile, "get-cas-id", "get cas id for file"),
-          clEnumValN(Validate, "validate", "validate the object for CASID")),
+          clEnumValN(Validate, "validate", "validate the object for CASID"),
+          clEnumValN(BenchmarkTree, "benchmark-tree", "benchmark tree")),
       cl::init(CommandKind::Invalid));
 
   cl::ParseCommandLineOptions(Argc, Argv, "llvm-cas CAS tool\n");
@@ -105,6 +113,9 @@ int main(int Argc, char **Argv) {
   if (Command == CommandKind::Invalid)
     ExitOnErr(createStringError(inconvertibleErrorCode(),
                                 "no command action is specified"));
+
+  if (Command == BenchmarkTree)
+    return benchmarkTree(DataPath);
 
   // FIXME: Consider creating an in-memory CAS.
   if (CASPath.empty())
@@ -480,5 +491,117 @@ int validateObject(CASDB &CAS, CASID ID) {
   ExitOnError ExitOnErr("llvm-cas: validate: ");
   ExitOnErr(CAS.validateObject(ID));
   outs() << ID << ": validated successfully\n";
+  return 0;
+}
+
+class TempDir {
+  SmallString<128> Path;
+
+public:
+  TempDir() {
+    std::error_code EC = llvm::sys::fs::createUniqueDirectory("cas", Path);
+    if (!EC) {
+      // Resolve any symlinks in the new directory.
+      std::string UnresolvedPath(Path.str());
+      EC = llvm::sys::fs::real_path(UnresolvedPath, Path);
+    }
+    if (EC)
+      Path.clear();
+  }
+
+  ~TempDir() {
+    if (!Path.empty()) {
+      llvm::sys::fs::remove_directories(Path.str());
+    }
+  }
+
+  TempDir(const TempDir &) = delete;
+  TempDir &operator=(const TempDir &) = delete;
+
+  TempDir(TempDir &&) = default;
+  TempDir &operator=(TempDir &&) = default;
+
+  /// The path to the temporary directory.
+  StringRef path() const { return Path; }
+};
+
+int benchmarkTree(StringRef DataPath) {
+  ExitOnError ExitOnErr("llvm-cas: benchmark: ");
+
+  // Benchmark by creating a file cas tree from provided.
+  std::vector<std::string> AllPaths;
+  std::error_code EC;
+  unsigned NumEntries = 0;
+  for (llvm::sys::fs::recursive_directory_iterator I(DataPath, EC), E;
+       I != E && !EC; I.increment(EC)) {
+    if (I->type() != llvm::sys::fs::file_type::regular_file)
+      continue;
+    AllPaths.push_back(I->path());
+    ++NumEntries;
+  }
+
+  llvm::outs() << "Benchmarking tree with " << NumEntries << " file entires\n";
+
+  TimerGroup Benchmark("Tree Benchmark", "Tree Benchmark");
+  Timer BuiltinCreation("Tree Create", "Tree Creation Timer (Builtin)",
+                        Benchmark);
+  Timer BuiltinTraversal("Tree Traversal", "Tree Traversal Timer (Builtin)",
+                         Benchmark);
+  Timer SchemaCreation("Tree Create", "Tree Creation Timer (Schema)",
+                       Benchmark);
+  Timer SchemaTraversal("Tree Traversal", "Tree Traversal Timer (Schema)",
+                        Benchmark);
+
+  {
+    TempDir OnDiskCASPath;
+    auto CAS = TestInMemory ? createInMemoryCAS()
+                            : ExitOnErr(createOnDiskCAS(OnDiskCASPath.path()));
+    HierarchicalTreeBuilder Builder;
+    auto FileRef = ExitOnErr(CAS->createBlob("fake file"));
+    for (auto &P : AllPaths)
+      Builder.push(FileRef.getRef(), TreeEntry::Regular, P);
+
+    Optional<AnyObjectHandle> Root;
+    {
+      TimeRegion Creation(BuiltinCreation);
+      Root = ExitOnErr(Builder.create(*CAS, true));
+    }
+    {
+      TimeRegion Traversal(BuiltinTraversal);
+      unsigned Counter = 0;
+      ExitOnErr(walkFileTreeRecursively(
+          *CAS, Root->get<TreeHandle>(),
+          [&](const NamedTreeEntry &Entry, Optional<TreeProxy> P) {
+            ++Counter;
+            return Error::success();
+          }));
+    }
+  }
+
+  {
+    TempDir OnDiskCASPath;
+    auto CAS = TestInMemory ? createInMemoryCAS()
+                            : ExitOnErr(createOnDiskCAS(OnDiskCASPath.path()));
+    HierarchicalTreeBuilder Builder;
+    TreeSchema Schema(*CAS);
+    Optional<AnyObjectHandle> Root;
+    auto FileRef = ExitOnErr(CAS->createBlob("fake file"));
+    for (auto &P : AllPaths)
+      Builder.push(FileRef.getRef(), TreeEntry::Regular, P);
+    {
+      TimeRegion Creation(SchemaCreation);
+      Root = ExitOnErr(Builder.create(*CAS, false));
+    }
+    {
+      TimeRegion Traversal(SchemaTraversal);
+      unsigned Counter = 0;
+      ExitOnErr(Schema.walkFileTreeRecursively(
+          *CAS, Root->get<ObjectHandle>(),
+          [&](const NamedTreeEntry &Entry, Optional<TreeNodeProxy> P) {
+            ++Counter;
+            return Error::success();
+          }));
+    }
+  }
   return 0;
 }

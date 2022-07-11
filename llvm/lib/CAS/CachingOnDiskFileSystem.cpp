@@ -645,9 +645,9 @@ void CachingOnDiskFileSystemImpl::trackNewAccesses() {
   TrackedAccesses->reserve(128); // Seed with a bit of runway.
 }
 
-static Expected<NodeProxy> toProxy(CASDB &CAS, Expected<NodeHandle> Node) {
+static Expected<NodeProxy> toProxy(CASDB &CAS, Expected<AnyObjectHandle> Node) {
   if (Node)
-    return NodeProxy::load(CAS, *Node);
+    return NodeProxy::load(CAS, Node->get<NodeHandle>());
   return Node.takeError();
 }
 

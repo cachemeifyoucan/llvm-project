@@ -63,7 +63,7 @@ private:
 
   friend class TreeNodeProxy;
 
-  CASID getKindID();
+  CASID getKindID() const;
   Expected<ObjectRef> storeTreeNodeName(StringRef Name);
 };
 
