@@ -168,11 +168,12 @@ public:
   storeTreeImpl(ArrayRef<uint8_t> ComputedHash,
                 ArrayRef<NamedTreeEntry> SortedEntries) = 0;
 
-  Expected<NodeHandle> storeNode(ArrayRef<ObjectRef> Refs,
-                                 ArrayRef<char> Data) final;
+  Expected<NodeHandle> storeNode(ArrayRef<ObjectRef> Refs, ArrayRef<char> Data,
+                                 bool CanBeInternal) final;
   virtual Expected<NodeHandle> storeNodeImpl(ArrayRef<uint8_t> ComputedHash,
                                              ArrayRef<ObjectRef> Refs,
-                                             ArrayRef<char> Data) = 0;
+                                             ArrayRef<char> Data,
+                                             bool CanBeInternal) = 0;
 
   Expected<NodeHandle>
   storeNodeFromOpenFileImpl(sys::fs::file_t FD,
@@ -181,7 +182,7 @@ public:
   storeNodeFromNullTerminatedRegion(ArrayRef<uint8_t> ComputedHash,
                                     sys::fs::mapped_file_region Map) {
     return storeNodeImpl(ComputedHash, None,
-                         makeArrayRef(Map.data(), Map.size()));
+                         makeArrayRef(Map.data(), Map.size()), false);
   }
 
   /// Both builtin CAS implementations provide lifetime for free, so this can

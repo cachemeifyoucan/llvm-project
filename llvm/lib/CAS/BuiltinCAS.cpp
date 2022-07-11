@@ -68,7 +68,7 @@ BuiltinCAS::storeNodeFromOpenFileImpl(sys::fs::file_t FD,
     SmallString<4 * 4096 * 2> Data;
     if (Error E = sys::fs::readNativeFileToEOF(FD, Data, MinMappedSize))
       return std::move(E);
-    return storeNode(None, makeArrayRef(Data.data(), Data.size()));
+    return storeNode(None, makeArrayRef(Data.data(), Data.size()), false);
   };
 
   // Check whether we can trust the size from stat.
@@ -94,7 +94,7 @@ BuiltinCAS::storeNodeFromOpenFileImpl(sys::fs::file_t FD,
       BuiltinObjectHasher<HasherT>::hashNode(*this, None, Data);
   if (!isAligned(Align(PageSize), Data.size()) && Data.end()[0] == 0)
     return storeNodeFromNullTerminatedRegion(ComputedHash, std::move(Map));
-  return storeNodeImpl(ComputedHash, None, Data);
+  return storeNodeImpl(ComputedHash, None, Data, false);
 }
 
 Expected<TreeHandle> BuiltinCAS::storeTree(ArrayRef<NamedTreeEntry> Entries) {
@@ -108,9 +108,11 @@ Expected<TreeHandle> BuiltinCAS::storeTree(ArrayRef<NamedTreeEntry> Entries) {
 }
 
 Expected<NodeHandle> BuiltinCAS::storeNode(ArrayRef<ObjectRef> Refs,
-                                           ArrayRef<char> Data) {
+                                           ArrayRef<char> Data,
+                                           bool CanBeInternal) {
   return storeNodeImpl(
-      BuiltinObjectHasher<HasherT>::hashNode(*this, Refs, Data), Refs, Data);
+      BuiltinObjectHasher<HasherT>::hashNode(*this, Refs, Data), Refs, Data,
+      CanBeInternal);
 }
 
 uint64_t BuiltinCAS::readDataImpl(NodeHandle Node, raw_ostream &OS,

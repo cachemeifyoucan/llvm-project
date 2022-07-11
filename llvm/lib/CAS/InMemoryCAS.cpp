@@ -10,6 +10,7 @@
 #include "llvm/ADT/LazyAtomicPointer.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PointerUnion.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/CAS/BuiltinObjectHasher.h"
 #include "llvm/CAS/HashMappedTrie.h"
 #include "llvm/CAS/ThreadSafeAllocator.h"
@@ -267,7 +268,8 @@ public:
                 ArrayRef<NamedTreeEntry> SortedEntries) final;
   Expected<NodeHandle> storeNodeImpl(ArrayRef<uint8_t> ComputedHash,
                                      ArrayRef<ObjectRef> Refs,
-                                     ArrayRef<char> Data) final;
+                                     ArrayRef<char> Data,
+                                     bool CanBeInternal) final;
 
   Expected<NodeHandle>
   storeNodeFromNullTerminatedRegion(ArrayRef<uint8_t> ComputedHash,
@@ -294,7 +296,9 @@ public:
   AnyObjectHandle getObjectHandle(const InMemoryObject &O) const {
     if (auto *T = dyn_cast<InMemoryTree>(&O))
       return getTreeHandle(*T);
-    return getNodeHandle(cast<InMemoryNode>(O));
+    if (auto *T = dyn_cast<InMemoryNode>(&O))
+      return getNodeHandle(*T);
+    return getNodeHandle(reinterpret_cast<const InMemoryString&>(O));
   }
 
   TreeHandle getTreeHandle(const InMemoryTree &Tree) const {
@@ -302,6 +306,10 @@ public:
     return makeTreeHandle(reinterpret_cast<uintptr_t>(&Tree));
   }
   NodeHandle getNodeHandle(const InMemoryNode &Node) const {
+    assert(!(reinterpret_cast<uintptr_t>(&Node) & 0x1ULL));
+    return makeNodeHandle(reinterpret_cast<uintptr_t>(&Node));
+  }
+  NodeHandle getNodeHandle(const InMemoryString &Node) const {
     assert(!(reinterpret_cast<uintptr_t>(&Node) & 0x1ULL));
     return makeNodeHandle(reinterpret_cast<uintptr_t>(&Node));
   }
@@ -511,7 +519,14 @@ Expected<NodeHandle> InMemoryCAS::storeNodeFromNullTerminatedRegion(
 
 Expected<NodeHandle> InMemoryCAS::storeNodeImpl(ArrayRef<uint8_t> ComputedHash,
                                                 ArrayRef<ObjectRef> Refs,
-                                                ArrayRef<char> Data) {
+                                                ArrayRef<char> Data,
+                                                bool CanBeInternal) {
+  if (CanBeInternal && Refs.empty()) {
+    // Optimize into StringPool implementation.
+    StringRef DataStr = toStringRef(Data);
+    return getNodeHandle(getOrCreateString(DataStr));
+  }
+
   // Look up the hash in the index, initializing to nullptr if it's new.
   auto &I = indexHash(ComputedHash);
 

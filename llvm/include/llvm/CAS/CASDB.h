@@ -178,7 +178,8 @@ public:
 
   virtual Expected<TreeHandle> storeTree(ArrayRef<NamedTreeEntry> Entries) = 0;
   virtual Expected<NodeHandle> storeNode(ArrayRef<ObjectRef> Refs,
-                                         ArrayRef<char> Data) = 0;
+                                         ArrayRef<char> Data,
+                                         bool CanBeInternal = false) = 0;
 
   Expected<NodeHandle> storeNodeFromString(ArrayRef<ObjectRef> Refs,
                                            StringRef String) {

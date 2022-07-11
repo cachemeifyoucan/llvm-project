@@ -49,7 +49,10 @@ static ObjectRef createBlobUnchecked(CASDB &CAS, StringRef Content) {
 
 static Expected<NodeHandle> createEmptyTree(CASDB &CAS) {
   HierarchicalTreeBuilder Builder;
-  return Builder.create(CAS);
+  auto MaybeTree = Builder.create(CAS);
+  if (!MaybeTree)
+    return MaybeTree.takeError();
+  return MaybeTree->get<NodeHandle>();
 }
 
 static Expected<NodeHandle> createFlatTree(CASDB &CAS) {
@@ -57,7 +60,10 @@ static Expected<NodeHandle> createFlatTree(CASDB &CAS) {
   Builder.push(createBlobUnchecked(CAS, "1"), TreeEntry::Regular, "file1");
   Builder.push(createBlobUnchecked(CAS, "1"), TreeEntry::Regular, "1");
   Builder.push(createBlobUnchecked(CAS, "2"), TreeEntry::Regular, "2");
-  return Builder.create(CAS);
+  auto MaybeTree = Builder.create(CAS);
+  if (!MaybeTree)
+    return MaybeTree.takeError();
+  return MaybeTree->get<NodeHandle>();
 }
 
 static Expected<NodeHandle> createNestedTree(CASDB &CAS) {
@@ -72,7 +78,10 @@ static Expected<NodeHandle> createNestedTree(CASDB &CAS) {
   Builder.push(Data1, TreeEntry::Regular, "/t3/t1nested/d1");
   Builder.push(Data1, TreeEntry::Regular, "/t3/t2/d1also");
   Builder.push(Data2, TreeEntry::Regular, "/t3/t2/d2");
-  return Builder.create(CAS);
+  auto MaybeTree = Builder.create(CAS);
+  if (!MaybeTree)
+    return MaybeTree.takeError();
+  return MaybeTree->get<NodeHandle>();
 }
 
 static Expected<NodeHandle> createSymlinksTree(CASDB &CAS) {
@@ -92,7 +101,10 @@ static Expected<NodeHandle> createSymlinksTree(CASDB &CAS) {
   Builder.push(make("blob4"), TreeEntry::Regular, "/d/e/f/b4");
   Builder.push(make("/d/b2"), TreeEntry::Symlink, "/d/e/f/s7");
   Builder.push(make(".."), TreeEntry::Symlink, "/d/e/s8");
-  return Builder.create(CAS);
+  auto MaybeTree = Builder.create(CAS);
+  if (!MaybeTree)
+    return MaybeTree.takeError();
+  return MaybeTree->get<NodeHandle>();
 }
 
 static Expected<NodeHandle> createSymlinkLoopsTree(CASDB &CAS) {
@@ -105,7 +117,10 @@ static Expected<NodeHandle> createSymlinkLoopsTree(CASDB &CAS) {
   Builder.push(make("../s2"), TreeEntry::Symlink, "/d/s3");
   Builder.push(make("d/s5"), TreeEntry::Symlink, "/d/s4");
   Builder.push(make("../s4"), TreeEntry::Symlink, "/d/d/s5");
-  return Builder.create(CAS);
+  auto MaybeTree = Builder.create(CAS);
+  if (!MaybeTree)
+    return MaybeTree.takeError();
+  return MaybeTree->get<NodeHandle>();
 }
 
 static Expected<std::unique_ptr<vfs::FileSystem>>

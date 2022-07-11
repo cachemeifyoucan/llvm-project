@@ -786,7 +786,8 @@ public:
                 ArrayRef<NamedTreeEntry> SortedEntries) final;
   Expected<NodeHandle> storeNodeImpl(ArrayRef<uint8_t> ComputedHash,
                                      ArrayRef<ObjectRef> Refs,
-                                     ArrayRef<char> Data) final;
+                                     ArrayRef<char> Data,
+                                     bool CanBeInternal) final;
 
   Expected<NodeHandle> createStandaloneLeaf(IndexProxy &I, ArrayRef<char> Data);
 
@@ -1886,7 +1887,8 @@ OnDiskCAS::storeTreeImpl(ArrayRef<uint8_t> ComputedHash,
 
 Expected<NodeHandle> OnDiskCAS::storeNodeImpl(ArrayRef<uint8_t> ComputedHash,
                                               ArrayRef<ObjectRef> Refs,
-                                              ArrayRef<char> Data) {
+                                              ArrayRef<char> Data,
+                                              bool CanBeInternal) {
   IndexProxy I = indexHash(ComputedHash);
 
   // Early return in case the node exists.

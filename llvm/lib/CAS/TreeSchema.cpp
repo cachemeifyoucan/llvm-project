@@ -162,7 +162,8 @@ TreeSchema::storeTree(ArrayRef<NamedTreeEntry> Entries) {
 }
 
 Expected<ObjectRef> TreeSchema::storeTreeNodeName(StringRef Name) {
-  auto Node = CAS.storeNodeFromString({}, Name);
+  auto Data = arrayRefFromStringRef<char>(Name);
+  auto Node = CAS.storeNode({}, Data, false);
   if (!Node)
     return Node.takeError();
 

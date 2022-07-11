@@ -236,7 +236,7 @@ TEST(TreeSchemaTest, walkFileTreeRecursively) {
   Builder.push(make("blob1"), TreeEntry::Regular, "/t1/d1");
   Builder.push(make("blob3"), TreeEntry::Regular, "/t3/d3");
   Builder.push(make("blob1"), TreeEntry::Regular, "/t3/t1nested/d1");
-  Optional<NodeHandle> Root;
+  Optional<AnyObjectHandle> Root;
   ASSERT_THAT_ERROR(Builder.create(*CAS).moveInto(Root), Succeeded());
 
   std::pair<std::string, bool> ExpectedEntries[] = {
