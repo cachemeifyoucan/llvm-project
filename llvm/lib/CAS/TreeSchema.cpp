@@ -91,23 +91,22 @@ Error TreeSchema::walkFileTreeRecursively(
   return Error::success();
 }
 
-size_t TreeSchema::getNameIndexStart(TreeNodeProxy Tree) const {
-  return alignTo(Tree.size(), Align(4));
-}
-
 static inline StringRef getNameFromNode(TreeNodeProxy Tree, size_t I) {
-  size_t Idx = Tree.getSchema().getNameIndexStart(Tree) + I * sizeof(uint32_t);
-  uint32_t StartIdx = support::endian::read<uint32_t, 4>(
-      Tree.getData().data() + Idx, support::endianness::little);
-  uint32_t EndIdx = support::endian::read<uint32_t, 4>(
-      Tree.getData().data() + Idx + sizeof(uint32_t),
+  // FIXME: Can assume alignment here?
+  uint32_t StartIdx = support::endian::read<uint32_t, 1>(
+      Tree.getData().data() + sizeof(uint32_t) * I,
+      support::endianness::little);
+  uint32_t EndIdx = support::endian::read<uint32_t, 1>(
+      Tree.getData().data() + sizeof(uint32_t) * (I + 1),
       support::endianness::little);
 
   return StringRef(Tree.getData().data() + StartIdx, EndIdx - StartIdx);
 }
 
 NamedTreeEntry TreeSchema::loadTreeEntry(TreeNodeProxy Tree, size_t I) const {
-  TreeEntry::EntryKind Kind = (TreeEntry::EntryKind)Tree.getData()[I];
+  TreeEntry::EntryKind Kind =
+      (TreeEntry::EntryKind)
+          Tree.getData()[I + (Tree.size() + 1) * sizeof(uint32_t)];
 
   StringRef Name = getNameFromNode(Tree, I);
   auto ObjectRef = Tree.getReference(I + 1);
@@ -214,17 +213,10 @@ Expected<TreeNodeProxy>
 TreeNodeProxy::Builder::build(ArrayRef<NamedTreeEntry> SortedEntries) {
   raw_svector_ostream OS(Data);
   support::endian::Writer Writer(OS, support::endianness::little);
-  // Write Kind.
-  for (auto &Entry : SortedEntries)
-    Writer.write((uint8_t)Entry.getKind());
-
-  // Write padding.
-  size_t PadSize = offsetToAlignment(Data.size(), Align(4));
-  for (size_t I = 0; I < PadSize; ++I)
-    Writer.write((uint8_t)0);
-
   // Write Name.
-  uint32_t StrIdx = Data.size() + sizeof(uint32_t) * (SortedEntries.size() + 1);
+  // The start of the string table index.
+  uint32_t StrIdx = sizeof(uint8_t) * SortedEntries.size() +
+                    sizeof(uint32_t) * (SortedEntries.size() + 1);
   for (auto &Entry : SortedEntries) {
     Writer.write(StrIdx);
     StrIdx += Entry.getName().size();
@@ -233,6 +225,10 @@ TreeNodeProxy::Builder::build(ArrayRef<NamedTreeEntry> SortedEntries) {
     IDs.push_back(Schema->CAS.getObjectID(Entry.getRef()));
   }
   Writer.write(StrIdx);
+
+  // Write Kind.
+  for (auto &Entry : SortedEntries)
+    Writer.write((uint8_t)Entry.getKind());
 
   // Write names in the end of the block.
   for (auto &Entry : SortedEntries)

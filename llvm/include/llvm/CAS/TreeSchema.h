@@ -56,8 +56,6 @@ public:
   Expected<TreeNodeProxy> loadTree(NodeHandle Object) const;
 
   Expected<TreeNodeProxy> storeTree(ArrayRef<NamedTreeEntry> Entries = None);
-
-  size_t getNameIndexStart(TreeNodeProxy Tree) const;
 private:
   static constexpr StringLiteral SchemaName = "llvm::cas::schema::tree::v1";
   Optional<CASID> TreeKindID;
