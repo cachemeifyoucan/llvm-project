@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/CAS/TreeSchema.h"
+#include "llvm/Support/Alignment.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/MemoryBufferRef.h"
@@ -90,27 +91,23 @@ Error TreeSchema::walkFileTreeRecursively(
   return Error::success();
 }
 
-constexpr size_t EntrySize = sizeof(uint32_t) + sizeof(uint8_t);
-
-static inline uint32_t getIndexForName(TreeNodeProxy Tree, size_t I) {
-  return support::endian::read<uint32_t, 1>(Tree.getData().data() +
-                                                EntrySize * I + sizeof(uint8_t),
-                                            support::endianness::little) +
-         EntrySize * Tree.size();
+size_t TreeSchema::getNameIndexStart(TreeNodeProxy Tree) const {
+  return alignTo(Tree.size(), Align(4));
 }
 
 static inline StringRef getNameFromNode(TreeNodeProxy Tree, size_t I) {
-  uint32_t StrIdx = getIndexForName(Tree, I);
+  size_t Idx = Tree.getSchema().getNameIndexStart(Tree) + I * sizeof(uint32_t);
+  uint32_t StartIdx = support::endian::read<uint32_t, 4>(
+      Tree.getData().data() + Idx, support::endianness::little);
+  uint32_t EndIdx = support::endian::read<uint32_t, 4>(
+      Tree.getData().data() + Idx + sizeof(uint32_t),
+      support::endianness::little);
 
-  uint32_t EndIdx = (I == Tree.size() - 1) ? Tree.getData().size()
-                                           : getIndexForName(Tree, I + 1);
-
-  return StringRef(Tree.getData().data() + StrIdx, EndIdx - StrIdx);
+  return StringRef(Tree.getData().data() + StartIdx, EndIdx - StartIdx);
 }
 
 NamedTreeEntry TreeSchema::loadTreeEntry(TreeNodeProxy Tree, size_t I) const {
-  TreeEntry::EntryKind Kind =
-      (TreeEntry::EntryKind)Tree.getData()[EntrySize * I];
+  TreeEntry::EntryKind Kind = (TreeEntry::EntryKind)Tree.getData()[I];
 
   StringRef Name = getNameFromNode(Tree, I);
   auto ObjectRef = Tree.getReference(I + 1);
@@ -217,16 +214,25 @@ Expected<TreeNodeProxy>
 TreeNodeProxy::Builder::build(ArrayRef<NamedTreeEntry> SortedEntries) {
   raw_svector_ostream OS(Data);
   support::endian::Writer Writer(OS, support::endianness::little);
-  uint32_t StrIdx = 0;
-  // Store Name and Kind.
-  for (auto &Entry : SortedEntries) {
+  // Write Kind.
+  for (auto &Entry : SortedEntries)
     Writer.write((uint8_t)Entry.getKind());
+
+  // Write padding.
+  size_t PadSize = offsetToAlignment(Data.size(), Align(4));
+  for (size_t I = 0; I < PadSize; ++I)
+    Writer.write((uint8_t)0);
+
+  // Write Name.
+  uint32_t StrIdx = Data.size() + sizeof(uint32_t) * (SortedEntries.size() + 1);
+  for (auto &Entry : SortedEntries) {
     Writer.write(StrIdx);
     StrIdx += Entry.getName().size();
 
     // Append refs.
     IDs.push_back(Schema->CAS.getObjectID(Entry.getRef()));
   }
+  Writer.write(StrIdx);
 
   // Write names in the end of the block.
   for (auto &Entry : SortedEntries)
