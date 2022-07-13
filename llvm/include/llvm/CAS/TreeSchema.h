@@ -107,7 +107,7 @@ private:
   public:
     static Expected<Builder> startNode(TreeSchema &Schema);
 
-    Expected<TreeNodeProxy> build();
+    Expected<TreeNodeProxy> build(ArrayRef<NamedTreeEntry> SortedEntries);
 
   private:
     Builder(const TreeSchema &Schema) : Schema(&Schema) {}
