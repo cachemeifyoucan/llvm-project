@@ -236,15 +236,19 @@ static CXErrorCode getFullDependencies(DependencyScanningWorker *Worker,
   bool HasError = Error;
   assert(HasDiagConsumer ^ HasError && "Both DiagConsumer and Error provided");
 
+  SmallVector<StringRef, 2> ModuleNames;
+  if (ModuleName)
+    ModuleNames.push_back(*ModuleName);
+
   if (DiagConsumer) {
     bool Result =
         Worker->computeDependencies(WorkingDirectory, Compilation, DepConsumer,
-                                    *Controller, *DiagConsumer, ModuleName);
+                                    *Controller, *DiagConsumer, ModuleNames);
     if (!Result)
       return CXError_Failure;
   } else if (Error) {
     auto Result = Worker->computeDependencies(
-        WorkingDirectory, Compilation, DepConsumer, *Controller, ModuleName);
+        WorkingDirectory, Compilation, DepConsumer, *Controller, ModuleNames);
     if (Result) {
       *Error = cxstring::createDup(llvm::toString(std::move(Result)));
       return CXError_Failure;

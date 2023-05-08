@@ -123,13 +123,13 @@ public:
                            DependencyConsumer &DepConsumer,
                            DependencyActionController &Controller,
                            DiagnosticConsumer &DiagConsumer,
-                           llvm::Optional<StringRef> ModuleName = None);
+                           ArrayRef<StringRef> ModuleNames = {});
   /// \returns A \c StringError with the diagnostic output if clang errors
   /// occurred, success otherwise.
   llvm::Error computeDependencies(
       StringRef WorkingDirectory, const std::vector<std::string> &CommandLine,
       DependencyConsumer &Consumer, DependencyActionController &Controller,
-      llvm::Optional<StringRef> ModuleName = None);
+      ArrayRef<StringRef> ModuleNames = {});
 
   /// Scan from a compiler invocation.
   /// If \p DiagGenerationAsCompilation is true it will generate error

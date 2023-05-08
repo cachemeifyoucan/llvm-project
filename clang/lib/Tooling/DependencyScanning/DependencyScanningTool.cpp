@@ -215,11 +215,12 @@ llvm::Expected<TranslationUnitDeps>
 DependencyScanningTool::getTranslationUnitDependencies(
     const std::vector<std::string> &CommandLine, StringRef CWD,
     const llvm::StringSet<> &AlreadySeen,
-    LookupModuleOutputCallback LookupModuleOutput) {
+    LookupModuleOutputCallback LookupModuleOutput,
+    ArrayRef<StringRef> AddedModules) {
   FullDependencyConsumer Consumer(AlreadySeen);
   auto Controller = createActionController(LookupModuleOutput);
-  llvm::Error Result =
-      Worker.computeDependencies(CWD, CommandLine, Consumer, *Controller);
+  llvm::Error Result = Worker.computeDependencies(CWD, CommandLine, Consumer,
+                                                  *Controller, AddedModules);
   if (Result)
     return std::move(Result);
   return Consumer.takeTranslationUnitDeps();

@@ -144,6 +144,7 @@ public:
   /// \param LookupModuleOutput This function is called to fill in
   ///                           "-fmodule-file=", "-o" and other output
   ///                           arguments for dependencies.
+  /// \param AdditionalModules Additional modules that need to be imported.
   ///
   /// \returns a \c StringError with the diagnostic output if clang errors
   /// occurred, \c TranslationUnitDeps otherwise.
@@ -151,7 +152,8 @@ public:
   getTranslationUnitDependencies(const std::vector<std::string> &CommandLine,
                                  StringRef CWD,
                                  const llvm::StringSet<> &AlreadySeen,
-                                 LookupModuleOutputCallback LookupModuleOutput);
+                                 LookupModuleOutputCallback LookupModuleOutput,
+                                 ArrayRef<StringRef> AdditionalModules = {});
 
   /// Given a compilation context specified via the Clang driver command-line,
   /// gather modular dependencies of module with the given name, and return the

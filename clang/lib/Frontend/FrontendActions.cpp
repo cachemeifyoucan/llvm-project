@@ -1196,11 +1196,15 @@ void GetDependenciesByModuleNameAction::ExecuteAction() {
   SourceManager &SM = PP.getSourceManager();
   FileID MainFileID = SM.getMainFileID();
   PP.EnterSourceFile(MainFileID, nullptr, SourceLocation());
-  SourceLocation FileStart = SM.getLocForStartOfFile(MainFileID);
-  SmallVector<std::pair<IdentifierInfo *, SourceLocation>, 2> Path;
-  IdentifierInfo *ModuleID = PP.getIdentifierInfo(ModuleName);
-  Path.push_back(std::make_pair(ModuleID, FileStart));
-  auto ModResult = CI.loadModule(FileStart, Path, Module::Hidden, false);
   PPCallbacks *CB = PP.getPPCallbacks();
-  CB->moduleImport(SourceLocation(), Path, ModResult);
+  unsigned Offset = 0;
+  for (auto ModuleName : ModuleNames) {
+    SourceLocation IncludeLoc =
+        SM.getLocForStartOfFile(MainFileID).getLocWithOffset(Offset++);
+    IdentifierInfo *ModuleID = PP.getIdentifierInfo(ModuleName);
+    SmallVector<std::pair<IdentifierInfo *, SourceLocation>, 2> Path;
+    Path.push_back(std::make_pair(ModuleID, IncludeLoc));
+    auto ModResult = CI.loadModule(IncludeLoc, Path, Module::Hidden, false);
+    CB->moduleImport(IncludeLoc, Path, ModResult);
+  }
 }

@@ -257,7 +257,7 @@ public:
       ScanningOutputFormat Format, bool OptimizeArgs, bool EagerLoadModules,
       bool DisableFree, bool EmitDependencyFile,
       bool DiagGenerationAsCompilation, const CASOptions &CASOpts,
-      llvm::Optional<StringRef> ModuleName = None,
+      ArrayRef<StringRef> ModuleNames = {},
       raw_ostream *VerboseOS = nullptr)
       : WorkingDirectory(WorkingDirectory), Consumer(Consumer),
         Controller(Controller),
@@ -267,7 +267,7 @@ public:
         CASOpts(CASOpts),
         EmitDependencyFile(EmitDependencyFile),
         DiagGenerationAsCompilation(DiagGenerationAsCompilation),
-        ModuleName(ModuleName), VerboseOS(VerboseOS) {}
+        ModuleNames(ModuleNames), VerboseOS(VerboseOS) {}
 
   bool runInvocation(std::shared_ptr<CompilerInvocation> Invocation,
                      FileManager *FileMgr,
@@ -433,8 +433,8 @@ public:
 
     std::unique_ptr<FrontendAction> Action;
 
-    if (ModuleName)
-      Action = std::make_unique<GetDependenciesByModuleNameAction>(*ModuleName);
+    if (!ModuleNames.empty())
+      Action = std::make_unique<GetDependenciesByModuleNameAction>(ModuleNames);
     else
       Action = std::make_unique<ReadPCHAndPreprocessAction>();
 
@@ -513,7 +513,7 @@ private:
   const CASOptions &CASOpts;
   bool EmitDependencyFile = false;
   bool DiagGenerationAsCompilation;
-  Optional<StringRef> ModuleName;
+  ArrayRef<StringRef> ModuleNames;
   Optional<CompilerInstance> ScanInstanceStorage;
   std::shared_ptr<ModuleDepCollector> MDC;
   std::vector<std::string> LastCC1Arguments;
@@ -566,7 +566,7 @@ DependencyScanningWorker::getOrCreateFileManager() const {
 llvm::Error DependencyScanningWorker::computeDependencies(
     StringRef WorkingDirectory, const std::vector<std::string> &CommandLine,
     DependencyConsumer &Consumer, DependencyActionController &Controller,
-    llvm::Optional<StringRef> ModuleName) {
+    ArrayRef<StringRef> ModuleNames) {
   std::vector<const char *> CLI;
   for (const std::string &Arg : CommandLine)
     CLI.push_back(Arg.c_str());
@@ -580,7 +580,7 @@ llvm::Error DependencyScanningWorker::computeDependencies(
   TextDiagnosticPrinter DiagPrinter(DiagnosticsOS, DiagOpts.release());
 
   if (computeDependencies(WorkingDirectory, CommandLine, Consumer, Controller,
-                          DiagPrinter, ModuleName))
+                          DiagPrinter, ModuleNames))
     return llvm::Error::success();
   return llvm::make_error<llvm::StringError>(DiagnosticsOS.str(),
                                              llvm::inconvertibleErrorCode());
@@ -626,7 +626,7 @@ static bool forEachDriverJob(
 bool DependencyScanningWorker::computeDependencies(
     StringRef WorkingDirectory, const std::vector<std::string> &CommandLine,
     DependencyConsumer &Consumer, DependencyActionController &Controller,
-    DiagnosticConsumer &DC, llvm::Optional<StringRef> ModuleName) {
+    DiagnosticConsumer &DC, ArrayRef<StringRef> ModuleNames) {
   // Reset what might have been modified in the previous worker invocation.
   BaseFS->setCurrentWorkingDirectory(WorkingDirectory);
 
@@ -636,19 +636,20 @@ bool DependencyScanningWorker::computeDependencies(
   // If we're scanning based on a module name alone, we don't expect the client
   // to provide us with an input file. However, the driver really wants to have
   // one. Let's just make it up to make the driver happy.
-  if (ModuleName) {
+  if (!ModuleNames.empty()) {
     auto OverlayFS =
         llvm::makeIntrusiveRefCnt<llvm::vfs::OverlayFileSystem>(BaseFS);
     auto InMemoryFS =
         llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
     InMemoryFS->setCurrentWorkingDirectory(WorkingDirectory);
 
-    SmallString<128> FakeInputPath;
-    // TODO: We should retry the creation if the path already exists.
-    llvm::sys::fs::createUniquePath(*ModuleName + "-%%%%%%%%.input",
-                                    FakeInputPath,
-                                    /*MakeAbsolute=*/false);
-    InMemoryFS->addFile(FakeInputPath, 0, llvm::MemoryBuffer::getMemBuffer(""));
+    // Use a stable name "<clang-module-imports>" as file name.
+    // FIXME: report proper error if the base FS already contains this file.
+    StringRef FakeInputPath = "<clang-module-imports>";
+    assert(!BaseFS->exists(FakeInputPath) && "path conflicts");
+    std::string nullStr(ModuleNames.size(), 0);
+    InMemoryFS->addFile(FakeInputPath, 0,
+                        llvm::MemoryBuffer::getMemBufferCopy(nullStr));
 
     llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> InMemoryOverlay =
         InMemoryFS;
@@ -696,7 +697,7 @@ bool DependencyScanningWorker::computeDependencies(
                                   DisableFree,
                                   /*EmitDependencyFile=*/false,
                                   /*DiagGenerationAsCompilation=*/false, getCASOpts(),
-                                  ModuleName);
+                                  ModuleNames);
   bool Success = forEachDriverJob(
       FinalCommandLine, *Diags, *FileMgr, [&](const driver::Command &Cmd) {
         if (StringRef(Cmd.getCreator().getName()) != "clang") {

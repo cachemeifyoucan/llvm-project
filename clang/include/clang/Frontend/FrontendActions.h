@@ -311,12 +311,12 @@ protected:
 };
 
 class GetDependenciesByModuleNameAction : public PreprocessOnlyAction {
-  StringRef ModuleName;
+  ArrayRef<StringRef> ModuleNames;
   void ExecuteAction() override;
 
 public:
-  GetDependenciesByModuleNameAction(StringRef ModuleName)
-      : ModuleName(ModuleName) {}
+  GetDependenciesByModuleNameAction(ArrayRef<StringRef> ModuleNames)
+      : ModuleNames(ModuleNames) {}
 };
 
 }  // end namespace clang
