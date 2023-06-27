@@ -27,10 +27,12 @@
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/Threading.h"
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -195,6 +197,18 @@ llvm::cl::opt<std::string> ModuleName(
 llvm::cl::list<std::string> ModuleDepTargets(
     "dependency-target",
     llvm::cl::desc("The names of dependency targets for the dependency file"),
+    llvm::cl::cat(DependencyScannerCategory));
+
+llvm::cl::opt<std::string> TranslationUnitFile(
+    "tu-path", llvm::cl::Optional,
+    llvm::cl::desc("The path to the translation unit for depscan. Not "
+                   "compatible with -module-name"),
+    llvm::cl::cat(DependencyScannerCategory));
+
+llvm::cl::list<std::string> AdditionalModules(
+    "import-module",
+    llvm::cl::desc("The names of module to be imported into translation unit. "
+                   "Only useful when -module-name is not used"),
     llvm::cl::cat(DependencyScannerCategory));
 
 enum ResourceDirRecipeKind {
@@ -1015,8 +1029,27 @@ int main(int argc, const char **argv) {
                                  DependencyOS, Errs))
             HadErrors = true;
         } else {
+          std::unique_ptr<llvm::MemoryBuffer> TU;
+          std::optional<llvm::MemoryBufferRef> TUBuffer;
+          if (!TranslationUnitFile.empty()) {
+            auto MaybeTU = llvm::MemoryBuffer::getFile(TranslationUnitFile);
+            if (!MaybeTU) {
+              llvm::errs() << "cannot open input translation unit: "
+                           << MaybeTU.getError().message() << "\n";
+              HadErrors = true;
+              continue;
+            }
+            TU = std::move(*MaybeTU);
+            TUBuffer = TU->getMemBufferRef();
+          }
+          std::vector<StringRef> ImportModules;
+          llvm::for_each(AdditionalModules,
+                         [&ImportModules](const std::string &name) {
+                           ImportModules.push_back(name);
+                         });
           auto MaybeTUDeps = WorkerTools[I]->getTranslationUnitDependencies(
-              Input->CommandLine, CWD, AlreadySeenModules, LookupOutput);
+              Input->CommandLine, CWD, AlreadySeenModules, LookupOutput,
+              ImportModules, TUBuffer);
           if (handleTranslationUnitResult(Filename, MaybeTUDeps, FD, LocalIndex,
                                           DependencyOS, Errs))
             HadErrors = true;
