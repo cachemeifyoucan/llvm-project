@@ -829,147 +829,101 @@ llvm::Error IncludeTreeRoot::print(llvm::raw_ostream &OS, unsigned Indent) {
 }
 
 namespace {
-/// An implementation of a \p vfs::FileSystem that supports the simple queries
-/// of the preprocessor, for creating \p FileEntries using a file path, while
-/// "replaying" an \p IncludeTreeRoot. It is not intended to be a complete
-/// implementation of a file system.
-class IncludeTreeFileSystem : public llvm::vfs::FileSystem {
-  llvm::cas::ObjectStore &CAS;
+/// Implementation for a file from IncludeTreeFileSystem.
+class IncludeTreeFile : public llvm::vfs::File {
+  llvm::vfs::Status Stat;
+  StringRef Contents;
+  cas::ObjectRef ContentsRef;
 
 public:
-  class IncludeTreeFile : public llvm::vfs::File {
-    llvm::vfs::Status Stat;
-    StringRef Contents;
-    cas::ObjectRef ContentsRef;
+  IncludeTreeFile(llvm::vfs::Status Stat, StringRef Contents,
+                  cas::ObjectRef ContentsRef)
+      : Stat(std::move(Stat)), Contents(Contents),
+        ContentsRef(std::move(ContentsRef)) {}
 
-  public:
-    IncludeTreeFile(llvm::vfs::Status Stat, StringRef Contents,
-                    cas::ObjectRef ContentsRef)
-        : Stat(std::move(Stat)), Contents(Contents),
-          ContentsRef(std::move(ContentsRef)) {}
+  llvm::ErrorOr<llvm::vfs::Status> status() override { return Stat; }
 
-    llvm::ErrorOr<llvm::vfs::Status> status() override { return Stat; }
-
-    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>
-    getBuffer(const Twine &Name, int64_t FileSize, bool RequiresNullTerminator,
-              bool IsVolatile) override {
-      SmallString<256> NameBuf;
-      return llvm::MemoryBuffer::getMemBuffer(Contents,
-                                              Name.toStringRef(NameBuf));
-    }
-
-    llvm::ErrorOr<Optional<cas::ObjectRef>> getObjectRefForContent() override {
-      return ContentsRef;
-    }
-
-    std::error_code close() override { return std::error_code(); }
-  };
-
-  explicit IncludeTreeFileSystem(llvm::cas::ObjectStore &CAS) : CAS(CAS) {}
-
-  struct FileEntry {
-    cas::ObjectRef ContentsRef;
-    IncludeTree::FileList::FileSizeTy Size;
-    llvm::sys::fs::UniqueID UniqueID;
-  };
-
-  struct MaterializedFile : FileEntry {
-    StringRef Contents;
-
-    MaterializedFile(StringRef Contents, FileEntry FE)
-        : FileEntry(std::move(FE)), Contents(Contents) {}
-  };
-
-  llvm::BumpPtrAllocator Alloc;
-  llvm::StringMap<FileEntry, llvm::BumpPtrAllocator &> Files{Alloc};
-  llvm::StringMap<llvm::sys::fs::UniqueID, llvm::BumpPtrAllocator &>
-      Directories{Alloc};
-
-  llvm::ErrorOr<llvm::vfs::Status> status(const Twine &Path) override {
-    SmallString<128> Filename;
-    getPath(Path, Filename);
-    auto FileEntry = Files.find(Filename);
-    if (FileEntry != Files.end()) {
-      return makeStatus(Filename, FileEntry->second.Size,
-                        FileEntry->second.UniqueID,
-                        llvm::sys::fs::file_type::regular_file);
-    }
-
-    // Also check whether this is a parent directory status query.
-    auto DirEntry = Directories.find(Filename);
-    if (DirEntry != Directories.end()) {
-      return makeStatus(Filename, /*Size*/ 0, DirEntry->second,
-                        llvm::sys::fs::file_type::directory_file);
-    }
-
-    return llvm::errorToErrorCode(fileError(Filename));
+  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>
+  getBuffer(const Twine &Name, int64_t FileSize, bool RequiresNullTerminator,
+            bool IsVolatile) override {
+    SmallString<256> NameBuf;
+    return llvm::MemoryBuffer::getMemBuffer(Contents,
+                                            Name.toStringRef(NameBuf));
   }
 
-  llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>>
-  openFileForRead(const Twine &Path) override {
-    SmallString<128> Filename;
-    getPath(Path, Filename);
-    auto MaterializedFile = materialize(Filename);
-    if (!MaterializedFile)
-      return llvm::errorToErrorCode(MaterializedFile.takeError());
-    llvm::vfs::Status Stat = makeStatus(
-        Filename, MaterializedFile->Contents.size(), MaterializedFile->UniqueID,
-        llvm::sys::fs::file_type::regular_file);
-    return std::make_unique<IncludeTreeFile>(
-        std::move(Stat), MaterializedFile->Contents,
-        std::move(MaterializedFile->ContentsRef));
+  llvm::ErrorOr<Optional<cas::ObjectRef>> getObjectRefForContent() override {
+    return ContentsRef;
   }
 
-  Expected<MaterializedFile> materialize(StringRef Filename) {
-    auto Entry = Files.find(Filename);
-    if (Entry == Files.end())
-      return fileError(Filename);
-    auto ContentsBlob = CAS.getProxy(Entry->second.ContentsRef);
-    if (!ContentsBlob)
-      return ContentsBlob.takeError();
-
-    return MaterializedFile{ContentsBlob->getData(), Entry->second};
-  }
-
-  /// Produce a filename compatible with our StringMaps. See comment in
-  /// \c createIncludeTreeFileSystem.
-  void getPath(const Twine &Path, SmallVectorImpl<char> &Out) {
-    Path.toVector(Out);
-    // Strip dots, but do not eliminate a path consisting only of '.'
-    if (Out.size() != 1)
-      llvm::sys::path::remove_dots(Out);
-  }
-
-  static llvm::vfs::Status makeStatus(StringRef Filename, uint64_t Size,
-                                      llvm::sys::fs::UniqueID UniqueID,
-                                      llvm::sys::fs::file_type Type) {
-    const llvm::sys::fs::perms Permissions =
-        llvm::sys::fs::perms::all_read | llvm::sys::fs::perms::owner_write;
-    return llvm::vfs::Status(Filename, UniqueID, llvm::sys::TimePoint<>(),
-                             /*User=*/0,
-                             /*Group=*/0, Size, Type, Permissions);
-  }
-
-  static llvm::Error fileError(StringRef Filename) {
-    return llvm::createFileError(
-        Filename,
-        llvm::createStringError(std::errc::no_such_file_or_directory,
-                                "filename not part of include tree list"));
-  }
-
-  llvm::vfs::directory_iterator dir_begin(const Twine &Dir,
-                                          std::error_code &EC) override {
-    EC = llvm::errc::operation_not_permitted;
-    return llvm::vfs::directory_iterator();
-  }
-  llvm::ErrorOr<std::string> getCurrentWorkingDirectory() const override {
-    return llvm::errc::operation_not_permitted;
-  }
-  std::error_code setCurrentWorkingDirectory(const Twine &Path) override {
-    return llvm::errc::operation_not_permitted;
-  }
+  std::error_code close() override { return std::error_code(); }
 };
+
+llvm::vfs::Status makeStatus(StringRef Filename, uint64_t Size,
+                                    llvm::sys::fs::UniqueID UniqueID,
+                                    llvm::sys::fs::file_type Type) {
+  const llvm::sys::fs::perms Permissions =
+      llvm::sys::fs::perms::all_read | llvm::sys::fs::perms::owner_write;
+  return llvm::vfs::Status(Filename, UniqueID, llvm::sys::TimePoint<>(),
+                           /*User=*/0,
+                           /*Group=*/0, Size, Type, Permissions);
+}
+
+llvm::Error fileError(StringRef Filename) {
+  return llvm::createFileError(
+      Filename,
+      llvm::createStringError(std::errc::no_such_file_or_directory,
+                              "filename not part of include tree list"));
+}
+
 } // namespace
+
+llvm::ErrorOr<llvm::vfs::Status>
+IncludeTreeFileSystem::status(const Twine &Path) {
+  SmallString<128> Filename;
+  getPath(Path, Filename);
+  auto FileEntry = Files.find(Filename);
+  if (FileEntry != Files.end()) {
+    return makeStatus(Filename, FileEntry->second.Size,
+                      FileEntry->second.UniqueID,
+                      llvm::sys::fs::file_type::regular_file);
+  }
+
+  // Also check whether this is a parent directory status query.
+  auto DirEntry = Directories.find(Filename);
+  if (DirEntry != Directories.end()) {
+    return makeStatus(Filename, /*Size*/ 0, DirEntry->second,
+                      llvm::sys::fs::file_type::directory_file);
+  }
+
+  return llvm::errorToErrorCode(fileError(Filename));
+}
+
+llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>>
+IncludeTreeFileSystem::openFileForRead(const Twine &Path) {
+  SmallString<128> Filename;
+  getPath(Path, Filename);
+  auto MaterializedFile = materialize(Filename);
+  if (!MaterializedFile)
+    return llvm::errorToErrorCode(MaterializedFile.takeError());
+  llvm::vfs::Status Stat = makeStatus(
+      Filename, MaterializedFile->Contents.size(), MaterializedFile->UniqueID,
+      llvm::sys::fs::file_type::regular_file);
+  return std::make_unique<IncludeTreeFile>(
+      std::move(Stat), MaterializedFile->Contents,
+      std::move(MaterializedFile->ContentsRef));
+}
+
+Expected<IncludeTreeFileSystem::MaterializedFile>
+IncludeTreeFileSystem::materialize(StringRef Filename) {
+  auto Entry = Files.find(Filename);
+  if (Entry == Files.end())
+    return fileError(Filename);
+  auto ContentsBlob = CAS.getProxy(Entry->second.ContentsRef);
+  if (!ContentsBlob)
+    return ContentsBlob.takeError();
+
+  return MaterializedFile{ContentsBlob->getData(), Entry->second};
+}
 
 static llvm::Error diagnoseFileChange(IncludeTree::File F, ObjectRef Content) {
   auto FilenameBlob = F.getFilename();
@@ -986,28 +940,15 @@ static llvm::Error diagnoseFileChange(IncludeTree::File F, ObjectRef Content) {
                                  NewID.c_str());
 }
 
-Expected<IntrusiveRefCntPtr<llvm::vfs::FileSystem>>
-cas::createIncludeTreeFileSystem(IncludeTreeRoot &Root) {
+llvm::Error
+IncludeTreeFileSystem::addFilesFromIncludeTree(IncludeTreeRoot &Root) {
   auto FileList = Root.getFileList();
   if (!FileList)
     return FileList.takeError();
 
-  // Map from FilenameRef to ContentsRef.
-  llvm::DenseMap<ObjectRef, ObjectRef> SeenContents;
-
-  IntrusiveRefCntPtr<IncludeTreeFileSystem> IncludeTreeFS =
-      new IncludeTreeFileSystem(Root.getCAS());
-  llvm::Error E = FileList->forEachFile(
+  return FileList->forEachFile(
       [&](IncludeTree::File File,
           IncludeTree::FileList::FileSizeTy Size) -> llvm::Error {
-        auto InsertPair = SeenContents.insert(
-            std::make_pair(File.getFilenameRef(), File.getContentsRef()));
-        if (!InsertPair.second) {
-          if (InsertPair.first->second != File.getContentsRef())
-            return diagnoseFileChange(File, InsertPair.first->second);
-          return llvm::Error::success();
-        }
-
         auto FilenameBlob = File.getFilename();
         if (!FilenameBlob)
           return FilenameBlob.takeError();
@@ -1021,18 +962,30 @@ cas::createIncludeTreeFileSystem(IncludeTreeRoot &Root) {
         StringRef DirName = llvm::sys::path::parent_path(Filename);
         if (DirName.empty())
           DirName = ".";
-        auto &DirEntry = IncludeTreeFS->Directories[DirName];
+        auto &DirEntry = Directories[DirName];
         if (DirEntry == llvm::sys::fs::UniqueID()) {
           DirEntry = llvm::vfs::getNextVirtualUniqueID();
         }
-
-        IncludeTreeFS->Files.insert(
+        auto Inserted = Files.insert(
             std::make_pair(Filename, IncludeTreeFileSystem::FileEntry{
                                          File.getContentsRef(), Size,
                                          llvm::vfs::getNextVirtualUniqueID()}));
+        // If already exists, diagnose if the file content is different.
+        if (!Inserted.second &&
+            File.getContentsRef() != Inserted.first->getValue().ContentsRef)
+          return diagnoseFileChange(File,
+                                    Inserted.first->getValue().ContentsRef);
+
         return llvm::Error::success();
       });
-  if (E)
+}
+
+Expected<IntrusiveRefCntPtr<clang::cas::IncludeTreeFileSystem>>
+cas::createIncludeTreeFileSystem(IncludeTreeRoot &Root) {
+  IntrusiveRefCntPtr<IncludeTreeFileSystem> IncludeTreeFS =
+      new IncludeTreeFileSystem(Root.getCAS());
+
+  if (auto E = IncludeTreeFS->addFilesFromIncludeTree(Root))
     return std::move(E);
 
   return IncludeTreeFS;

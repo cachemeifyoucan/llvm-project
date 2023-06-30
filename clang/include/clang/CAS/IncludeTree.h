@@ -798,7 +798,63 @@ private:
 /// of the preprocessor, for creating \p FileEntries using a file path, while
 /// "replaying" an \p IncludeTreeRoot. It is not intended to be a complete
 /// implementation of a file system.
-Expected<IntrusiveRefCntPtr<llvm::vfs::FileSystem>>
+class IncludeTreeFileSystem : public llvm::vfs::FileSystem {
+public:
+  explicit IncludeTreeFileSystem(llvm::cas::ObjectStore &CAS) : CAS(CAS) {}
+
+  llvm::ErrorOr<llvm::vfs::Status> status(const Twine &Path) override;
+
+  llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>>
+  openFileForRead(const Twine &Path) override;
+
+  llvm::vfs::directory_iterator dir_begin(const Twine &Dir,
+                                          std::error_code &EC) override {
+    EC = llvm::errc::operation_not_permitted;
+    return llvm::vfs::directory_iterator();
+  }
+  llvm::ErrorOr<std::string> getCurrentWorkingDirectory() const override {
+    return llvm::errc::operation_not_permitted;
+  }
+  std::error_code setCurrentWorkingDirectory(const Twine &Path) override {
+    return llvm::errc::operation_not_permitted;
+  }
+
+  llvm::Error addFilesFromIncludeTree(IncludeTreeRoot &Root);
+
+private:
+  struct FileEntry {
+    cas::ObjectRef ContentsRef;
+    IncludeTree::FileList::FileSizeTy Size;
+    llvm::sys::fs::UniqueID UniqueID;
+  };
+
+  struct MaterializedFile : FileEntry {
+    StringRef Contents;
+
+    MaterializedFile(StringRef Contents, FileEntry FE)
+        : FileEntry(std::move(FE)), Contents(Contents) {}
+  };
+
+  llvm::cas::ObjectStore &CAS;
+  llvm::BumpPtrAllocator Alloc;
+  llvm::StringMap<FileEntry, llvm::BumpPtrAllocator &> Files{Alloc};
+  llvm::StringMap<llvm::sys::fs::UniqueID, llvm::BumpPtrAllocator &>
+      Directories{Alloc};
+
+  Expected<MaterializedFile> materialize(StringRef Filename);
+
+  /// Produce a filename compatible with our StringMaps. See comment in
+  /// \c createIncludeTreeFileSystem.
+  void getPath(const Twine &Path, SmallVectorImpl<char> &Out) {
+    Path.toVector(Out);
+    // Strip dots, but do not eliminate a path consisting only of '.'
+    if (Out.size() != 1)
+      llvm::sys::path::remove_dots(Out);
+  }
+};
+
+/// Create IncludeTreeFileSystem from IncludeTreeRoot.
+Expected<IntrusiveRefCntPtr<clang::cas::IncludeTreeFileSystem>>
 createIncludeTreeFileSystem(IncludeTreeRoot &Root);
 
 } // namespace cas
