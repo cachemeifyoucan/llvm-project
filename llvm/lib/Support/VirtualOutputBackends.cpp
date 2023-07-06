@@ -13,6 +13,8 @@
 #include "llvm/Support/VirtualOutputBackends.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/LockFileManager.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Signals.h"
@@ -277,7 +279,7 @@ Error OnDiskOutputFile::initializeFD(Optional<int> &FD) {
   // Disable temporary file for other non-regular files, and if we get a status
   // object, also check if we can write and disable write-through buffers if
   // appropriate.
-  if (Config.getAtomicWrite()) {
+  if (Config.writeToTemp()) {
     sys::fs::file_status Status;
     sys::fs::status(OutputPath, Status);
     if (sys::fs::exists(Status)) {
@@ -294,7 +296,7 @@ Error OnDiskOutputFile::initializeFD(Optional<int> &FD) {
 
   // If (still) using a temporary file, try to create it (and return success if
   // that works).
-  if (Config.getAtomicWrite())
+  if (Config.writeToTemp())
     if (!errorToBool(tryToCreateTemporary(FD)))
       return Error::success();
 
@@ -447,6 +449,64 @@ Error OnDiskOutputFile::keep() {
 
   if (!TempPath)
     return Error::success();
+
+  // See if we should append instead of move.
+  if (Config.getAtomicAppend() && OutputPath != "-") {
+    // Read TempFile for the content to append.
+    auto Content = MemoryBuffer::getFile(*TempPath);
+    if (!Content)
+      return convertToTempFileOutputError(*TempPath, OutputPath,
+                                          Content.getError());
+    while (1) {
+      // Attempt to lock the output file.
+      // Only one process is allowed to append to this file at a time.
+      llvm::LockFileManager Locked(OutputPath);
+      switch (Locked) {
+      case llvm::LockFileManager::LFS_Error: {
+        // If we error acquiring a lock, we cannot ensure appends
+        // to the trace file are atomic - cannot ensure output correctness.
+        Locked.unsafeRemoveLockFile();
+        return convertToOutputError(
+            OutputPath, std::make_error_code(std::errc::no_lock_available));
+      }
+      case llvm::LockFileManager::LFS_Owned: {
+        // Lock acquired, perform the write and release the lock.
+        std::error_code EC;
+        llvm::raw_fd_ostream Out(OutputPath, EC, llvm::sys::fs::OF_Append);
+        if (EC)
+          return convertToOutputError(OutputPath, EC);
+        Out << (*Content)->getBuffer();
+        Out.close();
+        Locked.unsafeRemoveLockFile();
+        if (Out.has_error())
+          return convertToOutputError(OutputPath, Out.error());
+        // Remove temp file and done.
+        (void)sys::fs::remove(*TempPath);
+        return Error::success();
+      }
+      case llvm::LockFileManager::LFS_Shared: {
+        // Someone else owns the lock on this file, wait.
+        switch (Locked.waitForUnlock(256)) {
+        case llvm::LockFileManager::Res_Success:
+          LLVM_FALLTHROUGH;
+        case llvm::LockFileManager::Res_OwnerDied: {
+          continue; // try again to get the lock.
+        }
+        case llvm::LockFileManager::Res_Timeout: {
+          // We could error on timeout to avoid potentially hanging forever, but
+          // it may be more likely that an interrupted process failed to clear
+          // the lock, causing other waiting processes to time-out. Let's clear
+          // the lock and try again right away. If we do start seeing compiler
+          // hangs in this location, we will need to re-consider.
+          Locked.unsafeRemoveLockFile();
+          continue;
+        }
+        }
+        break;
+      }
+      }
+    } 
+  }
 
   if (Config.getOnlyIfDifferent()) {
     auto Result = areFilesDifferent(*TempPath, OutputPath);

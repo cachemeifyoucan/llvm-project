@@ -23,6 +23,7 @@ TEST(VirtualOutputConfigTest, construct) {
   EXPECT_TRUE(OutputConfig().getAtomicWrite());
   EXPECT_TRUE(OutputConfig().getImplyCreateDirectories());
   EXPECT_FALSE(OutputConfig().getOnlyIfDifferent());
+  EXPECT_FALSE(OutputConfig().getAtomicAppend());
 
   // Test inverted defaults.
   EXPECT_TRUE(OutputConfig().getNoText());
@@ -31,6 +32,7 @@ TEST(VirtualOutputConfigTest, construct) {
   EXPECT_FALSE(OutputConfig().getNoAtomicWrite());
   EXPECT_FALSE(OutputConfig().getNoImplyCreateDirectories());
   EXPECT_TRUE(OutputConfig().getNoOnlyIfDifferent());
+  EXPECT_TRUE(OutputConfig().getNoAtomicAppend());
 }
 
 TEST(VirtualOutputConfigTest, set) {
@@ -144,6 +146,12 @@ TEST(VirtualOutputConfigTest, OpenFlags) {
     EXPECT_EQ(OutputConfig().setTextWithCRLF(),
               Init.setOpenFlags(OF_TextWithCRLF));
   }
+}
+
+TEST(VirtualOutputConfigTest, WriteToTemp) {
+  EXPECT_FALSE(OutputConfig().setNoAtomicWrite().writeToTemp());
+  EXPECT_TRUE(OutputConfig().setAtomicWrite().writeToTemp());
+  EXPECT_TRUE(OutputConfig().setAtomicAppend().writeToTemp());
 }
 
 } // anonymous namespace

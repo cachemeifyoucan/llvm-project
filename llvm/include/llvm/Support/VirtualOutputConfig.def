@@ -21,5 +21,7 @@ HANDLE_OUTPUT_CONFIG_FLAG(AtomicWrite, true) // E.g., use temporaries.
 HANDLE_OUTPUT_CONFIG_FLAG(ImplyCreateDirectories, true)
 // Skip atomic write if existing file content is the same
 HANDLE_OUTPUT_CONFIG_FLAG(OnlyIfDifferent, false)
+// Atomic append to the output file.
+HANDLE_OUTPUT_CONFIG_FLAG(AtomicAppend, false)
 
 #undef HANDLE_OUTPUT_CONFIG_FLAG

@@ -374,7 +374,7 @@ public:
 
 bool OnDiskOutputBackendProvider::shouldUseTemporaries(
     const FileInfo &Info) const {
-  return Info.Config.getAtomicWrite() && !Settings.DisableTemporaries;
+  return Info.Config.writeToTemp() && !Settings.DisableTemporaries;
 }
 
 struct ProviderGeneratorList {
@@ -805,6 +805,35 @@ TEST(OnDiskBackendTest, OnlyIfDifferent) {
 
   // This should overwrite the file and create a different UniqueID.
   EXPECT_NE(Status1.getUniqueID(), Status3.getUniqueID());
+}
+
+TEST(OnDiskBackendTest, AtomicAppend) {
+  OnDiskOutputBackendProvider Provider;
+  auto Backend = Provider.createBackend();
+  std::string FilePath = Provider.getFilePathToCreate();
+  OutputConfig Config = OutputConfig().setAtomicAppend();
+
+  OutputFile O1, O2;
+  // Write first file.
+  EXPECT_THAT_ERROR(Backend->createFile(FilePath, Config).moveInto(O1),
+                    Succeeded());
+  O1 << "some data\n";
+  EXPECT_THAT_ERROR(O1.keep(), Succeeded());
+  EXPECT_FALSE(O1.isOpen());
+
+  OnDiskFile File1(*Provider.D, FilePath);
+  EXPECT_TRUE(File1.equalsCurrentContent("some data\n"));
+
+  // Append same data.
+  EXPECT_THAT_ERROR(Backend->createFile(FilePath, Config).moveInto(O2),
+                    Succeeded());
+  O2 << "more data\n";
+  EXPECT_THAT_ERROR(O2.keep(), Succeeded());
+  EXPECT_FALSE(O2.isOpen());
+
+  // Check data is appended.
+  OnDiskFile File2(*Provider.D, FilePath);
+  EXPECT_TRUE(File2.equalsCurrentContent("some data\nmore data\n"));
 }
 
 TEST(HashingBackendTest, HashOutput) {
