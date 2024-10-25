@@ -15,7 +15,8 @@ using namespace llvm::cas;
 
 CASTestingEnv createInMemory(int I) {
   std::unique_ptr<ObjectStore> CAS = createInMemoryCAS();
-  return CASTestingEnv{std::move(CAS)};
+  std::unique_ptr<ActionCache> Cache = createInMemoryActionCache();
+  return CASTestingEnv{std::move(CAS), std::move(Cache)};
 }
 
 INSTANTIATE_TEST_SUITE_P(InMemoryCAS, CASTest,
