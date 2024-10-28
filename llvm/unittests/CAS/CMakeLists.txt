@@ -12,7 +12,9 @@ add_llvm_unittest(CASTests
   ActionCacheTest.cpp
   CASTestConfig.cpp
   ObjectStoreTest.cpp
+  OnDiskGraphDBTest.cpp
   OnDiskHashMappedTrieTest.cpp
+  OnDiskKeyValueDBTest.cpp
   ProgramTest.cpp
   )
 

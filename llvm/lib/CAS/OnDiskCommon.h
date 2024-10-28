@@ -9,9 +9,22 @@
 #ifndef LLVM_LIB_CAS_ONDISKCOMMON_H
 #define LLVM_LIB_CAS_ONDISKCOMMON_H
 
+#include "llvm/Support/Error.h"
 #include <chrono>
+#include <optional>
 
 namespace llvm::cas::ondisk {
+
+/// Retrieves an overridden maximum mapping size for CAS files, if any,
+/// speicified by LLVM_CAS_MAX_MAPPING_SIZE in the environment or set by
+/// `setMaxMappingSize()`. If the value from environment is unreadable, returns
+/// an error.
+Expected<std::optional<uint64_t>> getOverriddenMaxMappingSize();
+
+/// Set MaxMappingSize for ondisk CAS. This function is not thread-safe and
+/// should be set before creaing any ondisk CAS and does not affect CAS already
+/// created. Set value 0 to use default size.
+void setMaxMappingSize(uint64_t Size);
 
 /// Thread-safe alternative to \c sys::fs::lockFile. This does not support all
 /// the platforms that \c sys::fs::lockFile does, so keep it in the CAS library

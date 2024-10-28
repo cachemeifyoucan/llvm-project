@@ -10,7 +10,9 @@ add_llvm_component_library(LLVMCAS
   MappedFileRegionBumpPtr.cpp
   ObjectStore.cpp
   OnDiskCommon.cpp
+  OnDiskKeyValueDB.cpp
   OnDiskHashMappedTrie.cpp
+  OnDiskGraphDB.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/CAS
