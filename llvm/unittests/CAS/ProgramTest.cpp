@@ -77,6 +77,8 @@ protected:
   ArrayRef<StringRef> getEnviron() const { return EnvTable; }
 };
 
+#if LLVM_ENABLE_ONDISK_CAS
+
 TEST_F(CASProgramTest, MappedFileRegionBumpPtrTest) {
   auto TestAllocator = [](StringRef Path) {
     auto NewFileConstructor = [&](MappedFileRegionBumpPtr &Alloc) -> Error {
@@ -145,3 +147,5 @@ TEST_F(CASProgramTest, MappedFileRegionBumpPtrTest) {
   sys::fs::remove(FilePath);
   sys::fs::remove_directories(sys::path::parent_path(FilePath));
 }
+
+#endif // LLVM_ENABLE_ONDISK_CAS
