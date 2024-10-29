@@ -9,6 +9,7 @@ add_llvm_component_library(LLVMCAS
   InMemoryCAS.cpp
   MappedFileRegionBumpPtr.cpp
   ObjectStore.cpp
+  OnDiskCAS.cpp
   OnDiskCommon.cpp
   OnDiskKeyValueDB.cpp
   OnDiskHashMappedTrie.cpp

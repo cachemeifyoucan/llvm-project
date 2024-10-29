@@ -9,7 +9,9 @@
 #include "BuiltinCAS.h"
 #include "llvm/ADT/TrieRawHashMap.h"
 #include "llvm/CAS/ActionCache.h"
+#include "llvm/CAS/OnDiskKeyValueDB.h"
 #include "llvm/Support/BLAKE3.h"
+#include "llvm/Support/Path.h"
 
 #define DEBUG_TYPE "action-caches"
 
@@ -48,6 +50,25 @@ private:
 
   InMemoryCacheT Cache;
 };
+
+class OnDiskActionCache final : public ActionCache {
+public:
+  Error putImpl(ArrayRef<uint8_t> ActionKey, const CASID &Result,
+                bool Globally) final;
+  Expected<std::optional<CASID>> getImpl(ArrayRef<uint8_t> ActionKey,
+                                         bool Globally) const final;
+
+  static Expected<std::unique_ptr<OnDiskActionCache>> create(StringRef Path);
+
+private:
+  static StringRef getHashName() { return "BLAKE3"; }
+
+  OnDiskActionCache(std::unique_ptr<ondisk::OnDiskKeyValueDB> DB);
+
+  std::unique_ptr<ondisk::OnDiskKeyValueDB> DB;
+  using DataT = CacheEntry<sizeof(HashType)>;
+};
+
 } // end namespace
 
 static std::string hashToString(ArrayRef<uint8_t> Hash) {
@@ -90,10 +111,73 @@ Error InMemoryActionCache::putImpl(ArrayRef<uint8_t> Key, const CASID &Result,
                                         Observed.getValue());
 }
 
+static constexpr StringLiteral DefaultName = "actioncache";
+
 namespace llvm::cas {
 
 std::unique_ptr<ActionCache> createInMemoryActionCache() {
   return std::make_unique<InMemoryActionCache>();
 }
 
+std::string getDefaultOnDiskActionCachePath() {
+  SmallString<128> Path;
+  if (!llvm::sys::path::cache_directory(Path))
+    report_fatal_error("cannot get default cache directory");
+  llvm::sys::path::append(Path, builtin::DefaultDir, DefaultName);
+  return Path.str().str();
+}
+
 } // namespace llvm::cas
+
+OnDiskActionCache::OnDiskActionCache(
+    std::unique_ptr<ondisk::OnDiskKeyValueDB> DB)
+    : ActionCache(builtin::BuiltinCASContext::getDefaultContext()),
+      DB(std::move(DB)) {}
+
+Expected<std::unique_ptr<OnDiskActionCache>>
+OnDiskActionCache::create(StringRef AbsPath) {
+  std::unique_ptr<ondisk::OnDiskKeyValueDB> DB;
+  if (Error E = ondisk::OnDiskKeyValueDB::open(AbsPath, getHashName(),
+                                               sizeof(HashType), getHashName(),
+                                               sizeof(DataT))
+                    .moveInto(DB))
+    return std::move(E);
+  return std::unique_ptr<OnDiskActionCache>(
+      new OnDiskActionCache(std::move(DB)));
+}
+
+Expected<std::optional<CASID>>
+OnDiskActionCache::getImpl(ArrayRef<uint8_t> Key, bool /*Globally*/) const {
+  std::optional<ArrayRef<char>> Val;
+  if (Error E = DB->get(Key).moveInto(Val))
+    return std::move(E);
+  if (!Val)
+    return std::nullopt;
+  return CASID::create(&getContext(), toStringRef(*Val));
+}
+
+Error OnDiskActionCache::putImpl(ArrayRef<uint8_t> Key, const CASID &Result,
+                                 bool /*Globally*/) {
+  auto ResultHash = Result.getHash();
+  ArrayRef Expected((const char *)ResultHash.data(), ResultHash.size());
+  ArrayRef<char> Observed;
+  if (Error E = DB->put(Key, Expected).moveInto(Observed))
+    return E;
+
+  if (Expected == Observed)
+    return Error::success();
+
+  return createResultCachePoisonedError(
+      hashToString(Key), getContext(), Result,
+      ArrayRef((const uint8_t *)Observed.data(), Observed.size()));
+}
+
+Expected<std::unique_ptr<ActionCache>>
+cas::createOnDiskActionCache(StringRef Path) {
+#if LLVM_ENABLE_ONDISK_CAS
+  return OnDiskActionCache::create(Path);
+#else
+  return createStringError(inconvertibleErrorCode(), "OnDiskCache is disabled");
+#endif
+}
+

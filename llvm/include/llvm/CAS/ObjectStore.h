@@ -296,6 +296,20 @@ private:
 
 std::unique_ptr<ObjectStore> createInMemoryCAS();
 
+/// \returns true if \c LLVM_ENABLE_ONDISK_CAS configuration was enabled.
+bool isOnDiskCASEnabled();
+
+/// Gets or creates a persistent on-disk path at \p Path.
+Expected<std::unique_ptr<ObjectStore>> createOnDiskCAS(const Twine &Path);
+
+/// Set \p Path to a reasonable default on-disk path for a persistent CAS for
+/// the current user.
+Error getDefaultOnDiskCASPath(SmallVectorImpl<char> &Path);
+
+/// Get a reasonable default on-disk path for a persistent CAS for the current
+/// user. \returns empty string if no reasonable path can be found.
+std::string getDefaultOnDiskCASPath();
+
 } // namespace cas
 } // namespace llvm
 

@@ -68,6 +68,8 @@ public:
   Error validate(const CASID &ID) final;
 };
 
+constexpr StringLiteral DefaultDir = "llvm.cas.builtin.default";
+
 } // end namespace builtin
 } // end namespace llvm::cas
 

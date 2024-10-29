@@ -8,6 +8,7 @@
 
 #include "llvm/CAS/ActionCache.h"
 #include "llvm/CAS/ObjectStore.h"
+#include "llvm/Testing/Support/SupportHelpers.h"
 #include "gtest/gtest.h"
 
 #ifndef LLVM_UNITTESTS_CASTESTCONFIG_H
@@ -16,23 +17,37 @@
 struct CASTestingEnv {
   std::unique_ptr<llvm::cas::ObjectStore> CAS;
   std::unique_ptr<llvm::cas::ActionCache> Cache;
+  std::optional<llvm::unittest::TempDir> Temp;
 };
+
+void setMaxOnDiskCASMappingSize();
 
 class CASTest
     : public testing::TestWithParam<std::function<CASTestingEnv(int)>> {
 protected:
   std::optional<int> NextCASIndex;
+  llvm::SmallVector<llvm::unittest::TempDir> Dirs;
 
   std::unique_ptr<llvm::cas::ObjectStore> createObjectStore() {
     auto TD = GetParam()(++(*NextCASIndex));
+    if (TD.Temp)
+      Dirs.push_back(std::move(*TD.Temp));
     return std::move(TD.CAS);
   }
   std::unique_ptr<llvm::cas::ActionCache> createActionCache() {
     auto TD = GetParam()(++(*NextCASIndex));
+    if (TD.Temp)
+      Dirs.push_back(std::move(*TD.Temp));
     return std::move(TD.Cache);
   }
-  void SetUp() { NextCASIndex = 0; }
-  void TearDown() { NextCASIndex = std::nullopt; }
+  void SetUp() {
+    NextCASIndex = 0;
+    setMaxOnDiskCASMappingSize();
+  }
+  void TearDown() {
+    NextCASIndex = std::nullopt;
+    Dirs.clear();
+  }
 };
 
 #endif
