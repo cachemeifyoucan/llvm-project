@@ -9,6 +9,7 @@
 #include "CachingActions.h"
 #include "clang/APINotes/APINotesManager.h"
 #include "clang/APINotes/APINotesReader.h"
+#include "clang/Basic/DiagnosticCAS.h"
 #include "clang/CAS/IncludeTree.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/Preprocessor.h"
@@ -128,7 +129,8 @@ private:
   SmallVector<StringRef> PreIncludedFileNames;
   llvm::BitVector SeenIncludeFiles;
   SmallVector<cas::IncludeTree::FileList::FileEntry> IncludedFiles;
-  SmallVector<cas::ObjectRef> IncludedFileLists;
+  SmallVector<std::pair<serialization::ModuleFile &, cas::IncludeTreeRoot>>
+      IncludedFileLists;
   std::optional<cas::ObjectRef> PredefinesBufferRef;
   std::optional<cas::ObjectRef> ModuleIncludesBufferRef;
   std::optional<cas::ObjectRef> ModuleMapRef;
@@ -780,8 +782,74 @@ IncludeTreeBuilder::finishIncludeTree(CompilerInstance &ScanInstance,
     }
   }
 
-  auto FileList =
-      cas::IncludeTree::FileList::create(DB, IncludedFiles, IncludedFileLists);
+  llvm::DenseMap<cas::ObjectRef,
+                 std::pair<serialization::ModuleFile *, cas::ObjectRef>>
+      SeenFiles;
+  SmallVector<cas::IncludeTree::FileList::FileEntry> Files;
+
+  auto MainFile = MainIncludeTree->getBaseFile();
+  if (!MainFile)
+    return MainFile.takeError();
+  auto MainFilename = MainFile->getFilename();
+  if (!MainFilename)
+    return MainFilename.takeError();
+
+  auto getContextName =
+      [&MainFilename](serialization::ModuleFile *MF) -> StringRef {
+    if (MF)
+      return MF->FileName;
+    return MainFilename->getData();
+  };
+
+  auto checkFile = [&](serialization::ModuleFile *MF, cas::IncludeTree::File F,
+                       cas::IncludeTree::FileList::FileSizeTy Size) -> Error {
+    auto Seen = SeenFiles.try_emplace(F.getFilenameRef(),
+                                      std::pair{MF, F.getContentsRef()});
+    if (Seen.first->second.second != F.getContentsRef()) {
+      auto Filename = F.getFilename();
+      if (!Filename)
+        return Filename.takeError();
+
+      ScanInstance.getDiagnostics().Report(diag::err_cas_depscan_file_changed)
+          << Filename->getData();
+      ScanInstance.getDiagnostics().Report(diag::note_cas_changed_file)
+          << getContextName(MF) << DB.getID(F.getContentsRef()).toString();
+      ScanInstance.getDiagnostics().Report(diag::note_cas_changed_file)
+          << getContextName(Seen.first->second.first)
+          << DB.getID(Seen.first->second.second).toString();
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "file system is not consistent and "
+                                     "changes are detected during the build");
+    }
+    if (Seen.second)
+      Files.emplace_back(cas::IncludeTree::FileList::FileEntry{F.getRef(), Size});
+    return Error::success();
+  };
+
+  for (auto &FileEntry: IncludedFiles) {
+    auto F = cas::IncludeTree::File::get(DB, FileEntry.FileRef);
+    if (!F)
+      return F.takeError();
+
+    if (auto E = checkFile(nullptr, *F, FileEntry.Size))
+      return E;
+  }
+
+  for (auto &Entry : IncludedFileLists) {
+    auto FileList = Entry.second.getFileList();
+    if (!FileList)
+      return FileList.takeError();
+    auto E = FileList->forEachFile(
+        [&](cas::IncludeTree::File F,
+            cas::IncludeTree::FileList::FileSizeTy Size) -> llvm::Error {
+          if (auto E = checkFile(&Entry.first, F, Size))
+            return E;
+          return Error::success();
+        });
+    if (E)
+      return std::move(E);
+  }
+  auto FileList = cas::IncludeTree::FileList::create(DB, Files, {});
   if (!FileList)
     return FileList.takeError();
 
@@ -809,7 +877,7 @@ Error IncludeTreeBuilder::addModuleInputs(ASTReader &Reader) {
     if (Error E = cas::IncludeTreeRoot::get(DB, *Ref).moveInto(Root))
       return E;
 
-    IncludedFileLists.push_back(Root->getFileListRef());
+    IncludedFileLists.emplace_back(MF, *Root);
   }
 
   return Error::success();

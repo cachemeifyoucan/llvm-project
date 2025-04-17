@@ -39,6 +39,9 @@ def err_cas_missing_input_cache_entry : Error<
   "CAS missing expected input cache key '%0'">, DefaultFatal;
 def err_cas_cannot_load_api_notes_include_tree : Error<
   "cannot load APINotes from include-tree-id '%0'">, DefaultFatal;
+def err_cas_depscan_file_changed: Error<
+  "file '%0' is changed during the build but its dependencies are not rebuilt">, DefaultFatal;
+def note_cas_changed_file: Note<"when building '%0', CASID for the file is: %1">;
 
 def warn_clang_cache_disabled_caching: Warning<
   "caching disabled because %0">,
