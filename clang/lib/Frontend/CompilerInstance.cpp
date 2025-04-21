@@ -2555,11 +2555,15 @@ static bool addCachedModuleFileToInMemoryCache(
     if (!Value) {
       Diag << Value.takeError();
     } else {
-      std::string ErrStr("no such entry in action cache; expected compile:\n");
+      std::string ErrStr("module file is not available in the CAS; expected to "
+                         "be produced by:\n");
       llvm::raw_string_ostream Err(ErrStr);
-      if (auto E = printCompileJobCacheKey(CAS, *ID, Err))
-        Diag << std::move(E);
-      else
+      if (auto E = printCompileJobCacheKey(CAS, *ID, Err)) {
+        // Ignore the error and skip printing the cache key. The cache key can
+        // be setup by a different compiler that is using an unknown schema.
+        llvm::consumeError(std::move(E));
+        Diag << "module file is not available in the CAS";
+      } else
         Diag << Err.str();
     }
     return true;

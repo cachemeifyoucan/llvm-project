@@ -59,7 +59,7 @@
 // RUN:   -fcache-compile-job -Rcompile-job-cache &> %t/bad_key2.txt
 // RUN: cat %t/bad_key2.txt | FileCheck %s -check-prefix=BAD_KEY2
 
-// BAD_KEY2: error: CAS cannot load module with key '{{.*}}' from -fmodule-file-cache-key: cas object is not a valid cache key
+// BAD_KEY2: error: CAS cannot load module with key '{{.*}}' from -fmodule-file-cache-key: module file is not available in the CAS
 
 // == Build A
 
@@ -87,7 +87,7 @@
 // RUN:   -fcache-compile-job -Rcompile-job-cache &> %t/not_in_cache.txt
 // RUN: cat %t/not_in_cache.txt | FileCheck %s -check-prefix=NOT_IN_CACHE -DPREFIX=%/t
 
-// NOT_IN_CACHE: error: CAS cannot load module with key '{{.*}}' from -fmodule-file-cache-key: no such entry in action cache; expected compile:
+// NOT_IN_CACHE: error: CAS cannot load module with key '{{.*}}' from -fmodule-file-cache-key: module file is not available in the CAS; expected to be produced by:
 // NOT_IN_CACHE: command-line:
 // NOT_IN_CACHE:   -cc1
 // NOT_IN_CACHE: filesystem:
