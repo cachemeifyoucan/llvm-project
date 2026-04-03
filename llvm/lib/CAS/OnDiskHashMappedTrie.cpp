@@ -1280,6 +1280,11 @@ private:
   Error visitSlot(unsigned I, SubtrieHandle Subtrie, StringRef Prefix,
                   SubtrieSlotValue Slot) final {
     if (RecordVerifier && Slot.isData()) {
+      if (static_cast<uint64_t>(Slot.asData()) + Trie.getRecordSize() >=
+          Trie.getRegion().size())
+        return createInvalidTrieError(
+            Slot.asData(), "slot data entry out of bound");
+
       if (!isAligned(MappedFileRegionBumpPtr::getAlign(), Slot.asData()))
         return createInvalidTrieError(Slot.asData(), "mis-aligned data entry");
 
