@@ -169,12 +169,19 @@ public:
   /// \param CacheFailure If true and the file does not exist, we'll cache
   /// the failure to find this file.
   llvm::Expected<DirectoryEntryRef> getDirectoryRef(StringRef DirName,
-                                                    bool CacheFailure = true);
+                                                    bool CacheFailure = true) {
+    if (auto DirOrErr = getDirectoryRefImpl(DirName, CacheFailure))
+      return *DirOrErr;
+    else
+      return llvm::createFileError(DirName, DirOrErr.getError());
+  }
 
   /// Get a \c DirectoryEntryRef if it exists, without doing anything on error.
   OptionalDirectoryEntryRef getOptionalDirectoryRef(StringRef DirName,
                                                     bool CacheFailure = true) {
-    return llvm::expectedToOptional(getDirectoryRef(DirName, CacheFailure));
+    if (auto DirOrErr = getDirectoryRefImpl(DirName, CacheFailure))
+      return *DirOrErr;
+    return std::nullopt;
   }
 
   /// Lookup, cache, and verify the specified file (real or virtual). Return the
@@ -274,6 +281,13 @@ private:
                        bool RequiresNullTerminator, bool IsText) const;
 
   DirectoryEntry *&getRealDirEntry(const llvm::vfs::Status &Status);
+
+  llvm::ErrorOr<DirectoryEntryRef>
+  getDirectoryRefImpl(StringRef DirName, bool CacheFailure);
+
+  llvm::ErrorOr<DirectoryEntryRef>
+  getDirectoryFromFileImpl(FileManager &FileMgr, StringRef Filename,
+                           bool CacheFailure);
 
 public:
   /// Get the 'stat' information for the given \p Path.
