@@ -85,23 +85,22 @@ void FileManager::clearStatCache() { StatCache.reset(); }
 
 /// Retrieve the directory that the given file name resides in.
 /// Filename can point to either a real file or a virtual file.
-static llvm::Expected<DirectoryEntryRef>
+static llvm::ErrorOr<DirectoryEntryRef>
 getDirectoryFromFile(FileManager &FileMgr, StringRef Filename,
                      bool CacheFailure) {
   if (Filename.empty())
-    return llvm::createFileError(
-        Filename, make_error_code(std::errc::no_such_file_or_directory));
+    return make_error_code(std::errc::no_such_file_or_directory);
 
   if (llvm::sys::path::is_separator(Filename[Filename.size() - 1]))
-    return llvm::createFileError(Filename,
-                                 make_error_code(std::errc::is_a_directory));
+    return make_error_code(std::errc::is_a_directory);
 
   StringRef DirName = llvm::sys::path::parent_path(Filename);
   // Use the current directory if file has no path component.
   if (DirName.empty())
     DirName = ".";
 
-  return FileMgr.getDirectoryRef(DirName, CacheFailure);
+  return llvm::expectedToErrorOr(
+      FileMgr.getDirectoryRef(DirName, CacheFailure));
 }
 
 DirectoryEntry *&FileManager::getRealDirEntry(const llvm::vfs::Status &Status) {
@@ -243,7 +242,7 @@ llvm::Expected<FileEntryRef> FileManager::getFileRef(StringRef Filename,
   // without a 'sys' subdir will get a cached failure result.
   auto DirInfoOrErr = getDirectoryFromFile(*this, Filename, CacheFailure);
   if (!DirInfoOrErr) { // Directory doesn't exist, file can't exist.
-    std::error_code Err = errorToErrorCode(DirInfoOrErr.takeError());
+    std::error_code Err = DirInfoOrErr.getError();
     if (CacheFailure)
       NamedFileEnt->second = Err;
     else
@@ -413,8 +412,8 @@ FileEntryRef FileManager::getVirtualFileRef(StringRef Filename, off_t Size,
   // from a source location preprocessor directive with an empty filename as
   // an example, so we need to pretend it has a name to ensure a valid directory
   // entry can be returned.
-  auto DirInfo = expectedToOptional(getDirectoryFromFile(
-      *this, Filename.empty() ? "." : Filename, /*CacheFailure=*/true));
+  auto DirInfo = getDirectoryFromFile(*this, Filename.empty() ? "." : Filename,
+                                      /*CacheFailure=*/true);
   assert(DirInfo &&
          "The directory of a virtual file should already be in the cache.");
 
