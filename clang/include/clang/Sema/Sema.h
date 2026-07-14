@@ -3609,8 +3609,12 @@ public:
       ExtnameUndeclaredIdentifiers;
 
   /// Set containing all typedefs that are likely unused.
-  llvm::SmallSetVector<const TypedefNameDecl *, 4>
+  llvm::SmallPtrSet<const TypedefNameDecl *, 4>
       UnusedLocalTypedefNameCandidates;
+
+  /// Return UnusedLocalTypedefNameCandidates in a deterministic order.
+  SmallVector<const TypedefNameDecl *, 4>
+  getSortedUnusedLocalTypedefNameCandidates() const;
 
   typedef LazyVector<const DeclaratorDecl *, ExternalSemaSource,
                      &ExternalSemaSource::ReadUnusedFileScopedDecls, 2, 2>
