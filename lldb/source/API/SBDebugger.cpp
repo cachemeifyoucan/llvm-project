@@ -294,6 +294,14 @@ void SBDebugger::MemoryPressureDetected() {
   // END CAS
 }
 
+// BEGIN CAS
+uint32_t SBDebugger::ReleaseCASObjectStores() {
+  LLDB_INSTRUMENT();
+
+  return ModuleList::ReleaseObjectStore();
+}
+// END CAS
+
 bool SBDebugger::IsValid() const {
   LLDB_INSTRUMENT_VA(this);
   return this->operator bool();

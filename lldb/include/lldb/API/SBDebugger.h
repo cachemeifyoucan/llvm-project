@@ -173,6 +173,21 @@ public:
   /// This can be used to free up memory resources by clearing caches.
   static void MemoryPressureDetected();
 
+  // BEGIN CAS
+  /// Release every CAS object store that is no longer needed.
+  ///
+  /// Drops the modules that were loaded out of a content-addressable store,
+  /// and the modules holding them, once nothing references them any more. This
+  /// happens automatically when a debugger is destroyed; call it directly to
+  /// reclaim a store sooner, for example after deleting the targets that used
+  /// it.
+  ///
+  /// \return
+  ///     The number of object stores that are still referenced, and so could
+  ///     not be released. Zero means everything was reclaimed.
+  static uint32_t ReleaseCASObjectStores();
+  // END CAS
+
   /// Check if this is a valid SBDebugger object.
   explicit operator bool() const;
 

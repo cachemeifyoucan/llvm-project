@@ -70,6 +70,47 @@ class TestCASReleaseObjectStore(TestBase):
         self.assertNotRegex(log_contents, pattern, msg)
 
     @skipUnlessDarwin
+    def test_release_on_api_call(self):
+        """SBDebugger.ReleaseCASObjectStores() reclaims the store once the
+        target that used it is gone, and reports nothing left referencing it."""
+        self.build()
+        log = self.getBuildArtifact("api_call.log")
+        result = lldb.SBCommandReturnObject()
+        self.dbg.GetCommandInterpreter().HandleCommand(
+            'log enable lldb module -f "%s"' % log, result
+        )
+        self.assertTrue(result.Succeeded(), result.GetError())
+
+        target = self.dbg.CreateTarget(self.getBuildArtifact("a.out"))
+        self.assertTrue(target.IsValid())
+        self.load_both_modules(target)
+
+        # While the target is alive it still references the CAS-backed modules,
+        # so the store cannot be released yet, and nothing is removed.
+        self.assertEqual(lldb.SBDebugger.ReleaseCASObjectStores(), 1)
+
+        self.dbg.DeleteTarget(target)
+        del target
+
+        # Now nothing references them, so the store is reclaimed. Two
+        # modules are removed: the module loaded out of the CAS, and the .o
+        # that held it.
+        self.assertEqual(lldb.SBDebugger.ReleaseCASObjectStores(), 0)
+
+        with open(log, "r") as f:
+            contents = f.read()
+        self.assertIn(
+            "Released object stores: 0 module(s) removed, 0 released, "
+            "1 still referenced",
+            contents,
+        )
+        self.assertIn(
+            "Released object stores: 2 module(s) removed, 1 released, "
+            "0 still referenced",
+            contents,
+        )
+
+    @skipUnlessDarwin
     def test_release_on_debugger_destroy(self):
         """Destroying a debugger releases its CAS object stores, and only drags
         along the modules that were keeping them alive. Debugging the same
