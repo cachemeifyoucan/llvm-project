@@ -602,6 +602,18 @@ public:
                          llvm::StringRef name_for_diagnostics,
                          const lldb::ModuleSP &nearby, ModuleSpec &module_spec,
                          lldb::ModuleSP &module_sp);
+
+  /// Release every CAS ObjectStore that is no longer referenced.
+  ///
+  /// Finds every module that carries a CAS, directly or through something it
+  /// holds, removes the ones among them that nothing else references, and
+  /// forgets the bookkeeping for each CAS whose last reference is now gone.
+  /// A process that never instantiated a CAS is left untouched.
+  ///
+  /// \return
+  ///    The number of CAS instances still referenced after this call. Each
+  ///    one is logged by path under the "modules" log channel.
+  static size_t ReleaseObjectStore();
   // END CAS
 
   static bool RemoveSharedModule(lldb::ModuleSP &module_sp);

@@ -506,6 +506,11 @@ public:
   /// the module in the statistics.
   virtual ModuleList GetDebugInfoModules() { return ModuleList(); }
 
+  // BEGIN CAS
+  /// Get the modules that this symbol file holds a strong reference to.
+  virtual ModuleList GetLoadedReferencedModules() { return ModuleList(); }
+  // END CAS
+
   /// Accessors for the bool that indicates if the debug info index was loaded
   /// from, or saved to the module index cache.
   ///

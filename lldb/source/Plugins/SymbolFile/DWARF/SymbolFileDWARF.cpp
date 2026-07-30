@@ -1720,6 +1720,18 @@ lldb::ModuleSP SymbolFileDWARF::GetExternalModule(ConstString name) {
   return pos->second;
 }
 
+// BEGIN CAS
+ModuleList SymbolFileDWARF::GetLoadedReferencedModules() {
+  // Deliberately does not call UpdateExternalModuleListIfNeeded(): this is
+  // asked during teardown, where loading anything new would be pointless.
+  ModuleList result;
+  for (const auto &entry : m_external_type_modules)
+    if (entry.second)
+      result.Append(entry.second);
+  return result;
+}
+// END CAS
+
 SymbolFileDWARF *SymbolFileDWARF::GetDIERefSymbolFile(const DIERef &die_ref) {
   // Anytime we get a "lldb::user_id_t" from an lldb_private::SymbolFile API we
   // must make sure we use the correct DWARF file when resolving things. On

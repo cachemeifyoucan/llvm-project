@@ -285,6 +285,13 @@ void SBDebugger::MemoryPressureDetected() {
   const bool mandatory = false;
 
   ModuleList::RemoveOrphanSharedModules(mandatory);
+
+  // BEGIN CAS
+  // A CAS keeps its on-disk database mapped for as long as any module loaded
+  // out of it is alive, so it is worth reclaiming under memory pressure too.
+  // This is a no-op when no CAS was ever instantiated.
+  ModuleList::ReleaseObjectStore();
+  // END CAS
 }
 
 bool SBDebugger::IsValid() const {
