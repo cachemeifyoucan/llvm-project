@@ -74,7 +74,7 @@ int tblgen_main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv);
 
   MultiFileTableGenMainFn MainFn = nullptr;
-  return TableGenMain(argv[0], MainFn);
+  return TableGenMain(ArrayRef<const char *>(argv, argc), MainFn);
 }
 
 #ifndef __has_feature
