@@ -10,6 +10,7 @@ add_llvm_component_library(LLVMTableGen
   StringToOffsetTable.cpp
   TableGenBackend.cpp
   TableGenBackendSkeleton.cpp
+  TableGenCache.cpp
   TGLexer.cpp
   TGParser.cpp
   TGTimer.cpp
@@ -18,5 +19,6 @@ add_llvm_component_library(LLVMTableGen
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/TableGen
 
   LINK_COMPONENTS
+  CAS
   Support
   )
