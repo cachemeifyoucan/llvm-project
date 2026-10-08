@@ -45,6 +45,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ScopedPrinter.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
@@ -2481,7 +2482,8 @@ bool hasBFloatType(const TreePatternNode &Node) {
 void GlobalISelEmitter::run(raw_ostream &OS) {
   if (!UseCoverageFile.empty()) {
     RuleCoverage = CodeGenCoverage();
-    auto RuleCoverageBufOrErr = MemoryBuffer::getFile(UseCoverageFile);
+    auto RuleCoverageBufOrErr =
+        SrcMgr.getVirtualFileSystem()->getBufferForFile(UseCoverageFile);
     if (!RuleCoverageBufOrErr) {
       PrintWarning(SMLoc(), "Missing rule coverage data");
       RuleCoverage = std::nullopt;

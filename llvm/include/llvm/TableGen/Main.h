@@ -42,6 +42,11 @@ LLVM_ABI int TableGenMain(const char *argv0, TableGenMainFn MainFn = nullptr);
 LLVM_ABI int TableGenMain(const char *argv0,
                           MultiFileTableGenMainFn MainFn = nullptr);
 
+/// Like the overloads above, but takes the whole command line, which is needed
+/// to cache the invocation when `--cas-path` is given.
+LLVM_ABI int TableGenMain(ArrayRef<const char *> Args,
+                          MultiFileTableGenMainFn MainFn = nullptr);
+
 /// Controls emitting large character arrays as strings or character arrays.
 /// Typically set to false when building with MSVC.
 extern LLVM_ABI cl::opt<bool> EmitLongStrLiterals;
