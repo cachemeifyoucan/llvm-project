@@ -1,5 +1,6 @@
 add_clang_unittest(ClangCASTests
   CASOptionsTest.cpp
+  IncludeTreeTest.cpp
   CLANG_LIBS
   clangBasic
   clangCAS
