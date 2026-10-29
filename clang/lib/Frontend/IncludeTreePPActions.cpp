@@ -16,6 +16,7 @@
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Lex/PPCachedActions.h"
 #include "clang/Lex/Preprocessor.h"
+#include "llvm/Support/ErrorHandling.h"
 
 using namespace clang;
 
@@ -144,6 +145,7 @@ public:
     case cas::IncludeTree::NodeKind::Tree:
       return MakeIncludeTree(Node->getIncludeTree());
     }
+    llvm_unreachable("unhandled IncludeTree::NodeKind");
   }
 
   void exitedFile(Preprocessor &PP, FileID FID) override {
