@@ -828,6 +828,21 @@ struct CachingDiagnosticsProcessor::DiagnosticsConsumer
     if (Level < DiagnosticsEngine::Note)
       return false;
 
+#ifndef NDEBUG
+    // These are intended for caching introspection, they should not be cached.
+    // If the \p CachingDiagnosticsProcessor::DiagnosticsConsumer received one
+    // of these it means that the diagnostic was emitted in-between a normal
+    // compilation starting & finishing, which should not be happening.
+    switch (Info.getID()) {
+    case diag::remark_compile_job_cache_hit:
+    case diag::remark_compile_job_cache_miss:
+    case diag::remark_compile_job_cache_miss_result_not_found:
+    case diag::remark_compile_job_cache_backend_output_not_found:
+    case diag::remark_compile_job_cache_skipped:
+      assert(0 && "unexpected caching remark diagnostic!");
+    }
+#endif
+
     return true;
   }
 

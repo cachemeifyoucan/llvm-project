@@ -52,6 +52,7 @@
 // FULL:                  "-disable-free"
 // FULL:                  "-fcas-include-tree"
 // FULL-NEXT:             "[[TREE_ID]]"
+// FULL:                  "-fcache-compile-job"
 // FULL:                  "-fsyntax-only"
 // FULL:                  "-x"
 // FULL-NEXT:             "c"

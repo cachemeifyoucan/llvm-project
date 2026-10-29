@@ -27,4 +27,22 @@ def err_cas_store: Error<"failed to store to CAS: %0">, DefaultFatal;
 def err_cas_missing_root_id : Error<
   "CAS missing expected root-id '%0'">, DefaultFatal;
 
+def err_caching_backend_fail: Error<
+  "caching backend error: %0">, DefaultFatal;
+def err_caching_output_non_deterministic: Error<
+  "caching failed because the output can be non-deterministic">;
+
+def remark_compile_job_cache_hit : Remark<
+  "compile job cache hit for '%0' => '%1'">, InGroup<CompileJobCacheHit>;
+def remark_compile_job_cache_miss : Remark<
+  "compile job cache miss for '%0'">, InGroup<CompileJobCacheMiss>;
+def remark_compile_job_cache_miss_result_not_found : Remark<
+  "compile job cache miss for '%0' (result not found: '%1')">,
+  InGroup<CompileJobCacheMiss>;
+def remark_compile_job_cache_backend_output_not_found : Remark<
+  "compile job cache backend did not find output '%0' for key '%1' (output ID: '%2')">,
+  InGroup<CompileJobCacheMiss>;
+def remark_compile_job_cache_skipped : Remark<
+  "compile job cache skipped for '%0'">, InGroup<CompileJobCache>;
+
 } // let Component = "CAS" in

@@ -38,6 +38,7 @@ void dependencies::configureInvocationForCaching(CowCompilerInvocation &CI,
                                                  std::string InputID) {
   CI.getMutCASOpts() = std::move(CASOpts);
   auto &FrontendOpts = CI.getMutFrontendOpts();
+  FrontendOpts.CacheCompileJob = true;
   FrontendOpts.IncludeTimestamps = false;
 
   // Clear this otherwise it defeats the purpose of making the compilation key

@@ -190,6 +190,8 @@ IncludeTreeActionController::clone() const {
 
 void IncludeTreeActionController::initializeScanInvocation(
     CompilerInvocation &ScanInvocation) {
+  // Enable caching in the resulting commands.
+  ScanInvocation.getFrontendOpts().CacheCompileJob = true;
   ScanInvocation.getCASOpts() = CASOpts;
 }
 

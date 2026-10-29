@@ -58,6 +58,7 @@
 // FULL:                  "-disable-free"
 // FULL:                  "-fcas-include-tree"
 // FULL-NEXT:             "[[TREE_ID]]"
+// FULL:                  "-fcache-compile-job"
 // FULL:                  "-fsyntax-only"
 // FULL:                  "-x"
 // FULL-NEXT:             "c"
@@ -85,7 +86,17 @@
 
 // Build the include-tree command
 // RUN: %deps-to-rsp %t/deps.json --tu-index 0 > %t/tu.rsp
-// RUN: %clang @%t/tu.rsp
+// RUN: %clang @%t/tu.rsp -Rcompile-job-cache 2> %t/t.err
+
+// Check cache key.
+// RUN: cp %t/full.txt %t/combined.txt
+// RUN: cat %t/t.err >> %t/combined.txt
+// RUN: FileCheck %s -input-file=%t/combined.txt -check-prefix=COMBINED
+
+// COMBINED:        "commands": [
+// COMBINED-NEXT:     {
+// COMBINED-NEXT:       "cache-key": "[[TU_CACHE_KEY:llvmcas://[[:xdigit:]]+]]"
+// COMBINED:      remark: compile job cache miss for '[[TU_CACHE_KEY]]'
 
 //--- cdb.json.template
 [

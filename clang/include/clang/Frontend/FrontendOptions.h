@@ -401,6 +401,18 @@ public:
   LLVM_PREFERRED_TYPE(bool)
   unsigned IsSystemModule : 1;
 
+  /// Cache -cc1 compilations when possible. Ignored unless CASFileSystemRootID
+  /// is specified.
+  unsigned CacheCompileJob : 1;
+
+  /// Avoid checking if the compile job is already cached, force compilation and
+  /// caching of compilation outputs. This is used for testing purposes.
+  unsigned DisableCachedCompileJobReplay : 1;
+
+  /// Keep the diagnostic client open for receiving diagnostics after the source
+  /// files have been processed.
+  unsigned MayEmitDiagnosticsAfterProcessingSourceFiles : 1;
+
   /// Output (and read) PCM files regardless of compiler errors.
   LLVM_PREFERRED_TYPE(bool)
   unsigned AllowPCMWithCompilerErrors : 1;
@@ -597,9 +609,11 @@ public:
         ASTDumpDecls(false), ASTDumpLookups(false),
         BuildingImplicitModule(false), BuildingImplicitModuleUsesLock(true),
         ModulesEmbedAllFiles(false), IncludeTimestamps(true),
-        UseTemporary(true), AllowPCMWithCompilerErrors(false),
-        ModulesShareFileManager(true), EmitSymbolGraph(false),
-        EmitExtensionSymbolGraphs(false),
+        UseTemporary(true), CacheCompileJob(false),
+        DisableCachedCompileJobReplay(false),
+        MayEmitDiagnosticsAfterProcessingSourceFiles(false),
+        AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
+        EmitSymbolGraph(false), EmitExtensionSymbolGraphs(false),
         EmitSymbolGraphSymbolLabelsForTesting(false),
         EmitPrettySymbolGraphs(false), GenReducedBMI(false),
         UseClangIRPipeline(false), ClangIRDisablePasses(false),

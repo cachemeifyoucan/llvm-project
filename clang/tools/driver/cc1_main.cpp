@@ -19,6 +19,7 @@
 #include "clang/Config/config.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
+#include "clang/Frontend/CompileJobCache.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/TextDiagnosticBuffer.h"
@@ -27,6 +28,7 @@
 #include "clang/FrontendTool/Utils.h"
 #include "clang/Options/Options.h"
 #include "clang/Serialization/ObjectFilePCHContainerReader.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
@@ -48,6 +50,7 @@
 #include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/VirtualFileSystem.h"
+#include "llvm/Support/VirtualOutputBackends.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/AArch64TargetParser.h"
@@ -219,6 +222,7 @@ static int PrintEnabledExtensions(const TargetOptions& TargetOpts) {
 int cc1_main(ArrayRef<const char *> Argv, const char *Argv0, void *MainAddr) {
   ensureSufficientStack();
 
+  CompileJobCache JobCache;
   IntrusiveRefCntPtr<DiagnosticIDs> DiagID = DiagnosticIDs::create();
 
   // Register the support for object-file-wrapped Clang modules.
@@ -293,12 +297,30 @@ int cc1_main(ArrayRef<const char *> Argv, const char *Argv0, void *MainAddr) {
   llvm::install_fatal_error_handler(LLVMErrorHandler,
                                   static_cast<void*>(&Clang->getDiagnostics()));
 
+  // Un-register error handler before exiting to ensure clang-cache wrapper
+  // works in process.
+  llvm::scope_exit FinishDiagnosticClientScope(
+      [&]() { llvm::remove_fatal_error_handler(); });
+
   DiagsBuffer->FlushDiagnostics(Clang->getDiagnostics());
   if (!Success)
     return 1;
 
+  // Initialize caching and replay, if enabled.
+  if (std::optional<int> Status = JobCache.initialize(*Clang))
+    return *Status; // FIXME: Should write out timers before exiting!
+
+  // Check for a cache hit.
+  if (std::optional<int> Status = JobCache.tryReplayCachedResult(*Clang))
+    return *Status; // FIXME: Should write out timers before exiting!
+
+  Clang->getFrontendOpts().MayEmitDiagnosticsAfterProcessingSourceFiles = true;
+
   // Execute the frontend actions.
   Success = ExecuteCompilerInvocation(Clang.get());
+
+  // Cache the result, and decanonicalize and finish outputs.
+  Success = JobCache.finishComputedResult(*Clang, Success);
 
   // If any timers were active but haven't been destroyed yet, print their
   // results now.  This happens in -disable-free mode.
@@ -323,21 +345,19 @@ int cc1_main(ArrayRef<const char *> Argv, const char *Argv0, void *MainAddr) {
       Compress = llvm::inferTimeTraceCompressionFromPath(
           Clang->getFrontendOpts().TimeTracePath);
     bool Binary = Compress == llvm::TimeTraceCompression::Zstd;
-    if (auto profilerOutput = Clang->createOutputFile(
-            Clang->getFrontendOpts().TimeTracePath, Binary,
-            /*RemoveFileOnSignal=*/false,
-            /*useTemporary=*/false)) {
+    llvm::vfs::OnDiskOutputBackend Backend;
+    if (std::optional<llvm::vfs::OutputFile> profilerOutput =
+            llvm::expectedToOptional(
+                Backend.createFile(Clang->getFrontendOpts().TimeTracePath,
+                                   llvm::vfs::OutputConfig()
+                                       .setTextWithCRLF(!Binary)
+                                       .setNoDiscardOnSignal()
+                                       .setNoAtomicWrite()))) {
       llvm::timeTraceProfilerWrite(*profilerOutput);
-      profilerOutput.reset();
+      llvm::consumeError(profilerOutput->keep());
       llvm::timeTraceProfilerCleanup();
-      Clang->clearOutputFiles(false);
     }
   }
-
-  // Our error handler depends on the Diagnostics object, which we're
-  // potentially about to delete. Uninstall the handler now so that any
-  // later errors use the default handling behavior instead.
-  llvm::remove_fatal_error_handler();
 
   // When running with -disable-free, don't do any destruction or shutdown.
   if (Clang->getFrontendOpts().DisableFree) {

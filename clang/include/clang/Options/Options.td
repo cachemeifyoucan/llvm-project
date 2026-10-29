@@ -9374,6 +9374,18 @@ def fcas_include_tree : Separate<["-"], "fcas-include-tree">,
     HelpText<"Configure the frontend to use a CAS include tree.">,
     MarshallingInfoString<FrontendOpts<"CASIncludeTreeID">>;
 
+// FIXME: Add to driver under -fexperimental-cache=compile-job.
+defm cache_compile_job : BoolFOption<"cache-compile-job",
+    FrontendOpts<"CacheCompileJob">, DefaultFalse,
+    PosFlag<SetTrue, [], [ClangOption], "Try to cache full compilation job (-cc1). Ignored"
+                         " (for now) without -fcas-fs.">,
+    NegFlag<SetFalse>>;
+
+defm cache_disable_replay : BoolFOption<"cache-disable-replay",
+    FrontendOpts<"DisableCachedCompileJobReplay">, DefaultFalse,
+    PosFlag<SetTrue, [], [ClangOption], "Disable replaying a cached compile job">,
+    NegFlag<SetFalse>>;
+
 } // let Visibility = [CC1Option]
 
 def sycl_std_EQ : Joined<["-"], "sycl-std=">, Group<sycl_Group>,

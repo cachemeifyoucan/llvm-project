@@ -24,6 +24,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/CAS/CASID.h"
+#include "llvm/CAS/CASOutputBackend.h"
 #include "llvm/Support/BuryPointer.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LibraryOptionsContext.h"
@@ -106,6 +108,9 @@ class CompilerInstance : public ModuleLoader {
 
   /// The ActionCache, if any.
   std::shared_ptr<llvm::cas::ActionCache> ActionCache;
+
+  /// The \c ActionCache key for this compilation, if caching is enabled.
+  std::optional<cas::CASID> CompileJobCacheKey;
 
   /// The file manager.
   IntrusiveRefCntPtr<FileManager> FileMgr;
@@ -384,6 +389,14 @@ public:
   const CASOptions &getCASOpts() const { return Invocation->getCASOpts(); }
   const TargetOptions &getTargetOpts() const {
     return Invocation->getTargetOpts();
+  }
+
+  std::optional<cas::CASID> getCompileJobCacheKey() const {
+    return CompileJobCacheKey;
+  }
+  void setCompileJobCacheKey(cas::CASID Key) {
+    assert(!CompileJobCacheKey || CompileJobCacheKey == Key);
+    CompileJobCacheKey = std::move(Key);
   }
 
   /// @}

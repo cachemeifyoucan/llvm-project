@@ -101,6 +101,9 @@ VALUE_DIAGOPT(MessageLength, 32, 0)
 
 DIAGOPT(ShowSafeBufferUsageSuggestions, 1, 0)
 
+/// When caching, fall back to the real file system to make paths absolute.
+DIAGOPT(FallbackRealFileSystemAbsolutePaths, 1, 0)
+
 #undef DIAGOPT
 #undef ENUM_DIAGOPT
 #undef VALUE_DIAGOPT

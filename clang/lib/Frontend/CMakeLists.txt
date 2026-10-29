@@ -19,6 +19,7 @@ add_clang_library(clangFrontend
   CASDependencyCollector.cpp
   ChainedDiagnosticConsumer.cpp
   ChainedIncludesSource.cpp
+  CompileJobCache.cpp
   CompileJobCacheKey.cpp
   CompileJobCacheResult.cpp
   CompilerInstance.cpp
