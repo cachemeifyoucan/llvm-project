@@ -14,6 +14,8 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/CAS/ObjectStore.h"
+#include "llvm/Support/PrefixMapper.h"
+#include "llvm/Support/PrefixMappingFileSystem.h"
 
 using namespace clang;
 using namespace dependencies;
@@ -51,6 +53,7 @@ private:
 private:
   CASOptions CASOpts;
   cas::ObjectStore &DB;
+  llvm::PrefixMapper PrefixMapper;
   // IncludeTreePPCallbacks keeps a pointer to the current builder, so use a
   // pointer so the builder cannot move when resizing.
   SmallVector<std::unique_ptr<IncludeTreeBuilder>> BuilderStack;
@@ -61,7 +64,8 @@ private:
 /// Callbacks for building an include-tree for a given translation unit.
 class IncludeTreeBuilder {
 public:
-  IncludeTreeBuilder(cas::ObjectStore &DB) : DB(DB) {}
+  IncludeTreeBuilder(cas::ObjectStore &DB, llvm::PrefixMapper &PrefixMapper)
+      : DB(DB), PrefixMapper(PrefixMapper) {}
 
   Expected<cas::IncludeTreeRoot>
   finishIncludeTree(CompilerInstance &ScanInstance,
@@ -104,6 +108,7 @@ private:
 
 private:
   cas::ObjectStore &DB;
+  llvm::PrefixMapper &PrefixMapper;
 
   std::optional<cas::ObjectRef> PCHRef;
   SmallVector<cas::IncludeTree::FileList::FileEntry> IncludedFiles;
@@ -175,6 +180,22 @@ public:
 };
 } // namespace
 
+/// The PCH recorded file paths with canonical paths, create a VFS that
+/// allows remapping back to the non-canonical source paths so that they are
+/// found during dep-scanning.
+void dependencies::addReversePrefixMappingFileSystem(
+    const llvm::PrefixMapper &PrefixMapper, CompilerInstance &ScanInstance) {
+  llvm::PrefixMapper ReverseMapper;
+  ReverseMapper.addInverseRange(PrefixMapper.getMappings());
+  ReverseMapper.sort();
+  IntrusiveRefCntPtr<llvm::vfs::FileSystem> FS =
+      llvm::vfs::createPrefixMappingFileSystem(
+          std::move(ReverseMapper), &ScanInstance.getVirtualFileSystem());
+
+  ScanInstance.setVirtualFileSystem(FS);
+  ScanInstance.getFileManager().setVirtualFileSystem(std::move(FS));
+}
+
 Expected<cas::IncludeTreeRoot> IncludeTreeActionController::getIncludeTree() {
   if (IncludeTreeResult)
     return *IncludeTreeResult;
@@ -205,7 +226,29 @@ bool IncludeTreeActionController::initialize(
     return false;
   }
 
-  BuilderStack.push_back(std::make_unique<IncludeTreeBuilder>(DB));
+  DepscanPrefixMapping::configurePrefixMapper(NewInvocation, PrefixMapper);
+
+  auto ensurePathRemapping = [&]() {
+    if (PrefixMapper.empty())
+      return;
+
+    PreprocessorOptions &PPOpts = ScanInstance.getPreprocessorOpts();
+    if (PPOpts.Includes.empty() && PPOpts.ImplicitPCHInclude.empty() &&
+        !ScanInstance.getLangOpts().Modules)
+      return;
+
+    addReversePrefixMappingFileSystem(PrefixMapper, ScanInstance);
+
+    // TODO: Confirm why it's not enough to do this in
+    // DepscanPrefixMapping::remapInvocationPaths.
+    // These are written in the predefines buffer, so we need to remap them.
+    for (std::string &Include : PPOpts.Includes)
+      PrefixMapper.mapInPlace(Include);
+  };
+  ensurePathRemapping();
+
+  BuilderStack.push_back(
+      std::make_unique<IncludeTreeBuilder>(DB, PrefixMapper));
 
   // Attach callbacks for the IncludeTree of the TU. The preprocessor
   // does not exist yet, so we need to indirect this via DependencyCollector.
@@ -255,6 +298,8 @@ bool IncludeTreeActionController::finalize(
   }
 
   configureInvocationForCaching(NewInvocation, CASOpts, InputID, InputKind);
+
+  DepscanPrefixMapping::remapInvocationPaths(NewInvocation, PrefixMapper);
 
   auto &CAS = ScanInstance.getOrCreateObjectStore();
   // FIXME: Make this return an error and propagate it up.
@@ -535,6 +580,11 @@ IncludeTreeBuilder::getCASTreeForFileIncludes(FilePPState &&PPState) {
 Expected<cas::IncludeTree::File>
 IncludeTreeBuilder::createIncludeFile(StringRef Filename,
                                       cas::ObjectRef Contents) {
+  SmallString<256> MappedPath;
+  if (!PrefixMapper.empty()) {
+    PrefixMapper.map(Filename, MappedPath);
+    Filename = MappedPath;
+  }
   return cas::IncludeTree::File::create(DB, Filename, std::move(Contents));
 }
 

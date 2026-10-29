@@ -498,6 +498,9 @@ Expected<llvm::cas::CASID> clang::scanAndUpdateCC1InlineWithTool(
     DependencyScanningTool &Tool, DiagnosticConsumer &DiagsConsumer,
     raw_ostream *VerboseOS, CompilerInvocation &Invocation,
     StringRef WorkingDirectory) {
+  llvm::PrefixMapper Mapper;
+  DepscanPrefixMapping::configurePrefixMapper(Invocation, Mapper);
+
   auto ScanInvocation = std::make_shared<CompilerInvocation>(Invocation);
   // An error during dep-scanning is treated as if the main compilation has
   // failed, but warnings are ignored and deferred for the main compilation.
@@ -528,6 +531,7 @@ Expected<llvm::cas::CASID> clang::scanAndUpdateCC1InlineWithTool(
     configureInvocationForCaching(CowInvocation, Tool.getCASOpts(),
                                   Root->toString(),
                                   CachingInputKind::IncludeTree);
+    DepscanPrefixMapping::remapInvocationPaths(CowInvocation, Mapper);
   });
   return *Root;
 }

@@ -52,6 +52,12 @@ defm fcas_plugin_option : Eq<"fcas-plugin-option", "Option to pass to the CAS pl
 
 def in_memory_cas : F<"in-memory-cas", "Use an in-memory CAS instead of on-disk.">;
 
+defm prefix_map_toolchain : Eq<"prefix-map-toolchain", "Path to remap toolchain path to.">;
+
+defm prefix_map_sdk : Eq<"prefix-map-sdk", "Path to remap SDK path to.">;
+
+defm prefix_map : Eq<"prefix-map", "Path to remap, as \"<old>=<new>\".">;
+
 def print_timing : F<"print-timing", "Print timing information">;
 
 def emit_visible_modules

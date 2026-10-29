@@ -19,6 +19,8 @@
 #include "llvm/Support/Error.h"
 
 namespace llvm {
+class PrefixMapper;
+
 namespace cas {
 class ObjectStore;
 class CASID;
@@ -38,6 +40,21 @@ namespace dependencies {
 void configureInvocationForCaching(CowCompilerInvocation &CI,
                                    CASOptions CASOpts, std::string InputID,
                                    CachingInputKind InputKind);
+
+struct DepscanPrefixMapping {
+  /// Add path mappings to the \p Mapper.
+  static void configurePrefixMapper(const CompilerInvocation &Invocation,
+                                    llvm::PrefixMapper &Mapper);
+
+  /// Add path mappings to the \p Mapper.
+  static void configurePrefixMapper(
+      ArrayRef<std::pair<std::string, std::string>> PathPrefixMappings,
+      llvm::PrefixMapper &Mapper);
+
+  /// Apply the mappings from \p Mapper to \p Invocation.
+  static void remapInvocationPaths(CowCompilerInvocation &Invocation,
+                                   llvm::PrefixMapper &Mapper);
+};
 
 } // namespace dependencies
 } // end namespace clang

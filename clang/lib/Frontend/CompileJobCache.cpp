@@ -168,6 +168,13 @@ std::optional<int> CompileJobCache::initialize(CompilerInstance &Clang) {
   Invocation.getDiagnosticOpts().FallbackRealFileSystemAbsolutePaths = true;
 
   llvm::PrefixMapper PrefixMapper;
+  llvm::SmallVector<llvm::MappedPrefix> Split;
+  llvm::MappedPrefix::transformPairs(CacheOpts.PathPrefixMappings, Split);
+  for (const auto &MappedPrefix : Split) {
+    // We use the inverse mapping because the \p PrefixMapper will be used for
+    // de-canonicalization of paths.
+    PrefixMapper.add(MappedPrefix.getInverse());
+  }
 
   CacheBackend = std::make_unique<CachingOutputs>(
       Clang, /*WorkingDir=*/"", std::move(PrefixMapper), CAS, Cache);

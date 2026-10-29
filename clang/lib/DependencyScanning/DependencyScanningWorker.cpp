@@ -13,6 +13,7 @@
 #include "clang/DependencyScanning/DependencyActionController.h"
 #include "clang/DependencyScanning/DependencyConsumer.h"
 #include "clang/DependencyScanning/DependencyScanningFilesystem.h"
+#include "clang/DependencyScanning/ScanAndUpdateArgs.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/SemaOpenACC.h"
@@ -22,6 +23,7 @@
 #include "llvm/Option/Option.h"
 #include "llvm/Support/AdvisoryLock.h"
 #include "llvm/Support/CrashRecoveryContext.h"
+#include "llvm/Support/PrefixMapper.h"
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TargetParser/Host.h"
 #include <mutex>
@@ -500,6 +502,48 @@ createDependencyOutputOptions(const CompilerInvocation &Invocation) {
   return Opts;
 }
 
+namespace {
+/// Builds a dependency file after reversing prefix mappings. This allows
+/// emitting a .d file that has real paths where they would otherwise be
+/// canonicalized.
+class ReversePrefixMappingDependencyFileGenerator
+    : public DependencyFileGenerator {
+  llvm::PrefixMapper ReverseMapper;
+
+public:
+  ReversePrefixMappingDependencyFileGenerator(
+      const DependencyOutputOptions &Opts)
+      : DependencyFileGenerator(Opts) {}
+
+  void initialize(const CompilerInvocation &CI) {
+    llvm::PrefixMapper Mapper;
+    DepscanPrefixMapping::configurePrefixMapper(CI, Mapper);
+    if (Mapper.empty())
+      return;
+
+    ReverseMapper.addInverseRange(Mapper.getMappings());
+    ReverseMapper.sort();
+  }
+
+  void maybeAddDependency(StringRef Filename, bool FromModule, bool IsSystem,
+                          bool IsModuleFile, bool IsDirectModuleImport,
+                          bool IsMissing) override {
+    if (ReverseMapper.empty())
+      return DependencyFileGenerator::maybeAddDependency(
+          Filename, FromModule, IsSystem, IsModuleFile, IsDirectModuleImport,
+          IsMissing);
+
+    // We may get canonicalized paths if prefix headers/PCH are used, so make
+    // sure to remap them back to original source paths.
+    SmallString<256> New{Filename};
+    ReverseMapper.mapInPlace(New);
+    return DependencyFileGenerator::maybeAddDependency(
+        New, FromModule, IsSystem, IsModuleFile, IsDirectModuleImport,
+        IsMissing);
+  }
+};
+} // namespace
+
 static std::shared_ptr<ModuleDepCollector>
 initializeScanInstanceDependencyCollector(
     CompilerInstance &ScanInstance,
@@ -509,9 +553,12 @@ initializeScanInstanceDependencyCollector(
     PrebuiltModulesAttrsMap PrebuiltModulesASTMap,
     SmallVector<StringRef> &StableDirs) {
   // FIXME: Find a way to implement this via a DependencyConsumer.
-  if (Service.getOpts().AsCompilation && !DepOutputOpts->OutputFile.empty())
-    ScanInstance.addDependencyCollector(
-        std::make_shared<DependencyFileGenerator>(*DepOutputOpts));
+  if (Service.getOpts().AsCompilation && !DepOutputOpts->OutputFile.empty()) {
+    auto DFG = std::make_shared<ReversePrefixMappingDependencyFileGenerator>(
+        *DepOutputOpts);
+    DFG->initialize(ScanInstance.getInvocation());
+    ScanInstance.addDependencyCollector(std::move(DFG));
+  }
 
   auto MDC = std::make_shared<ModuleDepCollector>(
       Service, std::move(DepOutputOpts), ScanInstance, Controller, Inv,

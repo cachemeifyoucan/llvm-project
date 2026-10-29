@@ -18,5 +18,11 @@ std::unique_ptr<DependencyActionController>
 createIncludeTreeActionController(LookupModuleOutputCallback LookupModuleOutput,
                                   CASOptions CASOpts, cas::ObjectStore &DB);
 
+/// The PCH recorded file paths with canonical paths, create a VFS that
+/// allows remapping back to the non-canonical source paths so that they are
+/// found during dep-scanning.
+void addReversePrefixMappingFileSystem(const llvm::PrefixMapper &PrefixMapper,
+                                       CompilerInstance &ScanInstance);
+
 } // namespace clang::dependencies
 #endif // LLVM_CLANG_DEPENDENCYSCANNING_CACHINGACTIONS_H

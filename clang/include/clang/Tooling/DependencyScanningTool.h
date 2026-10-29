@@ -17,6 +17,7 @@
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/CAS/CASID.h"
+#include "llvm/Support/PrefixMapper.h"
 #include <optional>
 #include <string>
 #include <vector>

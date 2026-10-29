@@ -120,6 +120,9 @@ static std::string OnDiskCASPath;
 static std::string CASPluginPath;
 static std::vector<std::pair<std::string, std::string>> CASPluginOptions;
 static bool InMemoryCAS;
+static std::string PrefixMapToolchain;
+static std::string PrefixMapSDK;
+static std::vector<std::string> PrefixMaps;
 
 #ifndef NDEBUG
 static constexpr bool DoRoundTripDefault = true;
@@ -285,6 +288,13 @@ static void ParseArgs(int argc, char **argv) {
     auto [L, R] = StringRef(A->getValue()).split('=');
     CASPluginOptions.emplace_back(std::string(L), std::string(R));
   }
+
+  if (const llvm::opt::Arg *A = Args.getLastArg(OPT_prefix_map_toolchain_EQ))
+    PrefixMapToolchain = A->getValue();
+  if (const llvm::opt::Arg *A = Args.getLastArg(OPT_prefix_map_sdk_EQ))
+    PrefixMapSDK = A->getValue();
+  for (const llvm::opt::Arg *A : Args.filtered(OPT_prefix_map_EQ))
+    PrefixMaps.emplace_back(A->getValue());
 
   Verbose = Args.hasArg(OPT_verbose);
 
@@ -1044,6 +1054,14 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
           }
         }
         AdjustedArgs.insert(AdjustedArgs.end(), FlagsEnd, Args.end());
+        if (!PrefixMapToolchain.empty())
+          AdjustedArgs.push_back("-fdepscan-prefix-map-toolchain=" +
+                                 PrefixMapToolchain);
+        if (!PrefixMapSDK.empty())
+          AdjustedArgs.push_back("-fdepscan-prefix-map-sdk=" + PrefixMapSDK);
+        for (StringRef Map : PrefixMaps) {
+          AdjustedArgs.push_back("-fdepscan-prefix-map=" + std::string(Map));
+        }
         return AdjustedArgs;
       };
 

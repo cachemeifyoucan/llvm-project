@@ -18,6 +18,7 @@
 #include "clang/Lex/HeaderSearchOptions.h"
 #include "llvm/CAS/ObjectStore.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/PrefixMapper.h"
 
 using namespace clang;
 using namespace clang::dependencies;
@@ -149,4 +150,54 @@ void dependencies::configureInvocationForCaching(CowCompilerInvocation &CI,
   case CachingInputKind::Object:
     llvm_unreachable("Object should not be available during scanning");
   }
+}
+
+void DepscanPrefixMapping::remapInvocationPaths(
+    CowCompilerInvocation &Invocation, llvm::PrefixMapper &Mapper) {
+  auto &FrontendOpts = Invocation.getMutFrontendOpts();
+  FrontendOpts.PathPrefixMappings.clear();
+
+  // If there are no mappings, we're done. Otherwise, continue and remap
+  // everything.
+  if (Mapper.empty())
+    return;
+
+  // Pass the remappings so that we can map cached diagnostics to the local
+  // paths during diagnostic rendering.
+  for (const llvm::MappedPrefix &Map : Mapper.getMappings()) {
+    FrontendOpts.PathPrefixMappings.emplace_back(Map.Old, Map.New);
+  }
+
+  // Note: We don't remap plugins for now, since we don't know how to remap
+  // their arguments. Maybe they should be loaded outside of the CAS filesystem?
+  // Maybe we should error?
+  //
+  // Note: DependencyOutputOptions::ExtraDeps are not in the cache key, but they
+  // are in the module context hash, which indirectly impacts the cache key when
+  // importing a module. In the future we may change how -fmodule-file-cache-key
+  // works when remapping to avoid needing this.
+  Invocation.visitMutPaths([&Mapper](StringRef Path, std::string &NewPath) {
+    CowCompilerInvocation::VisitMutResult Res;
+    Res.Replace = Mapper.map(Path, NewPath);
+    return Res;
+  });
+}
+
+void DepscanPrefixMapping::configurePrefixMapper(const CompilerInvocation &CI,
+                                                 llvm::PrefixMapper &Mapper) {
+  return configurePrefixMapper(CI.getFrontendOpts().PathPrefixMappings, Mapper);
+}
+
+void DepscanPrefixMapping::configurePrefixMapper(
+    ArrayRef<std::pair<std::string, std::string>> PathPrefixMappings,
+    llvm::PrefixMapper &Mapper) {
+  if (PathPrefixMappings.empty())
+    return;
+
+  llvm::SmallVector<llvm::MappedPrefix> Split;
+  llvm::MappedPrefix::transformPairs(PathPrefixMappings, Split);
+  for (auto &MappedPrefix : Split)
+    Mapper.add(MappedPrefix);
+
+  Mapper.sort();
 }
