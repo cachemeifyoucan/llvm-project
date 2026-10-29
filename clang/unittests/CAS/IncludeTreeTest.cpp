@@ -11,7 +11,6 @@
 #include "clang/Frontend/TextDiagnosticBuffer.h"
 #include "clang/Tooling/DependencyScanningTool.h"
 #include "llvm/ADT/SmallBitVector.h"
-#include "llvm/CAS/CASProvidingFileSystem.h"
 #include "llvm/CAS/ObjectStore.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/VirtualFileSystem.h"
@@ -176,9 +175,7 @@ TEST(IncludeTree, IncludeTreeScan) {
   add("sys_indirect.h", "");
 
   DependencyScanningServiceOptions Opts;
-  Opts.MakeVFS = [DB = DB, FS] {
-    return llvm::cas::createCASProvidingFileSystem(DB, FS);
-  };
+  Opts.MakeVFS = [FS] { return FS; };
   Opts.Compilation = IncludeTreeCompilation{CASOpts, DB, Cache};
   DependencyScanningService Service(std::move(Opts));
   DependencyScanningTool ScanTool(Service);
@@ -320,6 +317,45 @@ TEST(IncludeTree, IncludeTreeScan) {
   EXPECT_EQ(Files[4].second, SysDirectiveContents.size());
   EXPECT_EQ(Files[5].first.getRef(), SysIndirectFile->getRef());
   EXPECT_EQ(Files[5].second, IncludeTree::FileList::FileSizeTy(0));
+}
+
+TEST(IncludeTree, IncludeTreeScanLocalFS) {
+  CASOptions CASOpts;
+  auto [DB, Cache] =
+      llvm::cantFail(CASOpts.CASConfiguration::createDatabases());
+  auto FS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
+  FS->setCurrentWorkingDirectory("/root");
+  FS->addFile("t.c", 0, llvm::MemoryBuffer::getMemBuffer("#include \"l.h\"\n"));
+  // The header is only visible to this worker.
+  auto LocalFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
+  LocalFS->setCurrentWorkingDirectory("/root");
+  LocalFS->addFile("l.h", 0, llvm::MemoryBuffer::getMemBuffer("int l;\n"));
+
+  DependencyScanningServiceOptions Opts;
+  Opts.MakeVFS = [FS] { return FS; };
+  Opts.Compilation = IncludeTreeCompilation{CASOpts, DB, Cache};
+  DependencyScanningService Service(std::move(Opts));
+  DependencyScanningTool ScanTool(Service, LocalFS);
+
+  TextDiagnosticBuffer DiagConsumer;
+  std::vector<std::string> CommandLine = {
+      "clang", "-target", "x86_64-apple-macos11", "-fsyntax-only", "t.c"};
+  std::optional<IncludeTreeRoot> Root;
+  ASSERT_THAT_ERROR(
+      ScanTool
+          .getIncludeTree(CommandLine, /*CWD*/ "/root", nullptr, DiagConsumer)
+          .moveInto(Root),
+      llvm::Succeeded());
+
+  std::optional<IncludeTree> Main;
+  ASSERT_THAT_ERROR(Root->getMainFileTree().moveInto(Main), llvm::Succeeded());
+  // The predefines buffer and l.h.
+  ASSERT_EQ(Main->getNumIncludes(), uint32_t(2));
+  std::optional<IncludeTree> Local;
+  ASSERT_THAT_ERROR(Main->getIncludeTree(1).moveInto(Local), llvm::Succeeded());
+  IncludeTree::FileInfo FI;
+  ASSERT_THAT_ERROR(Local->getBaseFileInfo().moveInto(FI), llvm::Succeeded());
+  EXPECT_EQ(FI.Contents, "int l;\n");
 }
 
 TEST(IncludeTree, IncludeTreeFileList) {

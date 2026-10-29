@@ -19,7 +19,6 @@
 #include "clang/Serialization/ObjectFilePCHContainerReader.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/ScopeExit.h"
-#include "llvm/CAS/CASProvidingFileSystem.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/AdvisoryLock.h"
 #include "llvm/Support/CrashRecoveryContext.h"
@@ -633,7 +632,7 @@ struct AsyncModuleCompile : PPCallbacks {
     // We should build the PCM.
     IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS =
         llvm::makeIntrusiveRefCnt<DependencyScanningWorkerFilesystem>(
-            Service, Service.getOpts().MakeVFS());
+            Service, Service.createVFS());
     VFS = createVFSFromCompilerInvocation(CI.getInvocation(),
                                           CI.getDiagnostics(), std::move(VFS));
     auto DC = std::make_unique<DiagnosticConsumer>();
@@ -1021,7 +1020,9 @@ DependencyScanningWorker::DependencyScanningWorker(
   // The scanner itself writes only raw ast files.
   PCHContainerOps->registerWriter(std::make_unique<RawPCHContainerWriter>());
 
-  auto BaseFS = Service.getOpts().MakeVFS();
+  auto BaseFS = Service.createVFS();
+  if (LocalFS)
+    LocalFS = Service.wrapVFSForCompilation(std::move(LocalFS));
 
   if (Service.getOpts().TraceVFS) {
     TracingFS = llvm::makeIntrusiveRefCnt<llvm::vfs::TracingFileSystem>(
@@ -1043,10 +1044,7 @@ DependencyScanningWorker::makeEffectiveVFS(
   if (OverlayFS) {
     // If we are using a CAS, we need to provide the fake input file in a
     // CASProvidingFS for include-tree.
-    if (auto *IncludeTree =
-            std::get_if<IncludeTreeCompilation>(&Service.getOpts().Compilation))
-      OverlayFS = llvm::cas::createCASProvidingFileSystem(IncludeTree->CAS,
-                                                          std::move(OverlayFS));
+    OverlayFS = Service.wrapVFSForCompilation(std::move(OverlayFS));
     auto NewFS =
         llvm::makeIntrusiveRefCnt<llvm::vfs::OverlayFileSystem>(std::move(FS));
     NewFS->pushOverlay(std::move(OverlayFS));

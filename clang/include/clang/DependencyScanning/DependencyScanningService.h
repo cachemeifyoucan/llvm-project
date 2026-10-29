@@ -167,6 +167,16 @@ public:
   CASOptions getCASOpts() const;
   std::shared_ptr<cas::ObjectStore> getCAS() const;
   std::shared_ptr<cas::ActionCache> getActionCache() const;
+
+  /// Create the base file system for a scan from \c MakeVFS. See
+  /// \c wrapVFSForCompilation.
+  IntrusiveRefCntPtr<llvm::vfs::FileSystem> createVFS() const;
+
+  /// Adapt \p FS to the compilation mode. In \c IncludeTreeCompilation mode
+  /// the files it provides are made CAS-backed, so the scanner can reference
+  /// their contents from the include-tree.
+  IntrusiveRefCntPtr<llvm::vfs::FileSystem>
+  wrapVFSForCompilation(IntrusiveRefCntPtr<llvm::vfs::FileSystem> FS) const;
   AtomicLineLogger &getLogger() { return Logger; }
 
 private:

@@ -8,6 +8,7 @@
 
 #include "clang/DependencyScanning/DependencyScanningService.h"
 #include "llvm/CAS/ActionCache.h"
+#include "llvm/CAS/CASProvidingFileSystem.h"
 #include "llvm/CAS/ObjectStore.h"
 
 #include "llvm/Support/Chrono.h"
@@ -65,4 +66,18 @@ DependencyScanningService::getActionCache() const {
           std::get_if<IncludeTreeCompilation>(&Opts.Compilation))
     return IncludeTree->Cache;
   return nullptr;
+}
+
+IntrusiveRefCntPtr<llvm::vfs::FileSystem>
+DependencyScanningService::createVFS() const {
+  return wrapVFSForCompilation(Opts.MakeVFS());
+}
+
+IntrusiveRefCntPtr<llvm::vfs::FileSystem>
+DependencyScanningService::wrapVFSForCompilation(
+    IntrusiveRefCntPtr<llvm::vfs::FileSystem> FS) const {
+  if (std::shared_ptr<cas::ObjectStore> CAS = getCAS())
+    return llvm::cas::createCASProvidingFileSystem(std::move(CAS),
+                                                   std::move(FS));
+  return FS;
 }
