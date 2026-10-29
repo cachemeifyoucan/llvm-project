@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "cc1depscanProtocol.h"
-#include "clang/DependencyScanning/ScanAndUpdateArgs.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Allocator.h"

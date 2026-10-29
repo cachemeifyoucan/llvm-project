@@ -30,12 +30,6 @@ struct DepscanSharing {
   SmallVector<const char *> CASArgs;
 };
 
-/// Represents an argument edit for automatic argument updates.
-struct AutoArgEdit {
-  uint32_t Index = -1u;
-  StringRef NewArg;
-};
-
 /// Get the base path for daemon socket based on a daemon key.
 std::string getBasePath(StringRef DaemonKey);
 
