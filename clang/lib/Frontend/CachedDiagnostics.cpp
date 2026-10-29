@@ -839,6 +839,10 @@ struct CachingDiagnosticsProcessor::DiagnosticsConsumer
     case diag::remark_compile_job_cache_miss_result_not_found:
     case diag::remark_compile_job_cache_backend_output_not_found:
     case diag::remark_compile_job_cache_skipped:
+    case diag::remark_compile_job_cache_timing_backend_key_query:
+    case diag::remark_compile_job_cache_timing_backend_key_update:
+    case diag::remark_compile_job_cache_timing_backend_load:
+    case diag::remark_compile_job_cache_timing_backend_store:
       assert(0 && "unexpected caching remark diagnostic!");
     }
 #endif

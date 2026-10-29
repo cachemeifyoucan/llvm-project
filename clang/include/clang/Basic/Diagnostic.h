@@ -29,6 +29,7 @@
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/VirtualFileSystemFwd.h"
 #include <cassert>
 #include <cstdint>
@@ -1671,6 +1672,14 @@ inline DiagnosticBuilder DiagnosticsEngine::Report(SourceLocation Loc,
 
 const StreamingDiagnostic &operator<<(const StreamingDiagnostic &DB,
                                       llvm::Error &&E);
+
+template <typename... Ts>
+const StreamingDiagnostic &operator<<(const StreamingDiagnostic &DB,
+                                      llvm::format_object<Ts...> Fmt) {
+  SmallString<32> Buf;
+  llvm::raw_svector_ostream(Buf) << Fmt;
+  return DB << Buf;
+}
 
 inline DiagnosticBuilder DiagnosticsEngine::Report(unsigned DiagID) {
   return Report(SourceLocation(), DiagID);

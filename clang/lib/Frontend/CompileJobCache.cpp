@@ -16,6 +16,7 @@
 #include "llvm/CAS/CASOutputBackend.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/PrefixMapper.h"
+#include "llvm/Support/ScopedDurationTimer.h"
 #include "llvm/Support/VirtualOutputBackends.h"
 
 using namespace clang;
@@ -184,16 +185,27 @@ Expected<bool> CompileJobCache::CachingOutputs::tryReplayCachedResult(
   DiagnosticsEngine &Diags = Clang.getDiagnostics();
 
   std::optional<llvm::cas::CASID> Result;
-  // Asking for the canonical cache key gives us better chances for cache hit.
-  if (Error E = Cache->get(CanonicalResultCacheKey, /*CanBeDistributed=*/true)
-                    .moveInto(Result))
-    return std::move(E);
+  {
+    llvm::ScopedDurationTimer ScopedTime([&Diags](double Seconds) {
+      Diags.Report(diag::remark_compile_job_cache_timing_backend_key_query)
+          << llvm::format("%.6fs", Seconds);
+    });
+    // Asking for the canonical cache key gives us better chances for cache hit.
+    if (Error E = Cache->get(CanonicalResultCacheKey, /*CanBeDistributed=*/true)
+                      .moveInto(Result))
+      return std::move(E);
+  }
 
   if (!Result) {
     Diags.Report(diag::remark_compile_job_cache_miss)
         << ResultCacheKey.toString();
     return false;
   }
+
+  llvm::ScopedDurationTimer ScopedTime([&Diags](double Seconds) {
+    Diags.Report(diag::remark_compile_job_cache_timing_backend_load)
+        << llvm::format("%.6fs", Seconds);
+  });
 
   std::optional<llvm::cas::ObjectRef> ResultRef = CAS->getReference(*Result);
   if (!ResultRef) {
@@ -328,6 +340,12 @@ bool CompileJobCache::finishComputedResult(CompilerInstance &Clang,
 
 Expected<llvm::cas::ObjectRef> CompileJobCache::CachingOutputs::writeOutputs(
     const llvm::cas::CASID &ResultCacheKey) {
+  DiagnosticsEngine &Diags = Clang.getDiagnostics();
+  llvm::ScopedDurationTimer ScopedTime([&Diags](double Seconds) {
+    Diags.Report(diag::remark_compile_job_cache_timing_backend_store)
+        << llvm::format("%.6fs", Seconds);
+  });
+
   Expected<std::optional<std::string>> SerialDiags =
       DiagProcessor->serializeEmittedDiagnostics();
   if (!SerialDiags)
@@ -362,6 +380,11 @@ Error CompileJobCache::CachingOutputs::finishComputedResult(
 
   // Skip caching if requested.
   if (!SkipCache) {
+    DiagnosticsEngine &Diags = Clang.getDiagnostics();
+    llvm::ScopedDurationTimer ScopedTime([&Diags](double Seconds) {
+      Diags.Report(diag::remark_compile_job_cache_timing_backend_key_update)
+          << llvm::format("%.6fs", Seconds);
+    });
     if (llvm::Error E = Cache->put(CanonicalResultCacheKey, CAS->getID(*Result),
                                    /*CanBeDistributed=*/true))
       return E;

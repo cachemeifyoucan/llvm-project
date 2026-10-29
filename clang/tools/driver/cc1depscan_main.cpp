@@ -31,6 +31,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/IOSandbox.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/ScopedDurationTimer.h"
 #include "llvm/Support/VirtualOutputBackends.h"
 #include "llvm/Support/raw_ostream.h"
 #include <optional>
@@ -131,6 +132,11 @@ static int scanAndUpdateCC1(const char *Exec, ArrayRef<const char *> OldArgs,
                             const llvm::opt::ArgList &Args,
                             const CASOptions &CASOpts,
                             std::optional<llvm::cas::CASID> &RootID) {
+  llvm::ScopedDurationTimer ScopedTime([&Diag](double Seconds) {
+    Diag.Report(diag::remark_compile_job_cache_timing_depscan)
+        << llvm::format("%.6fs", Seconds);
+  });
+
   StringRef WorkingDirectory;
   std::string WorkingDirectoryBuf;
   if (auto *Arg = Args.getLastArg(clang::options::OPT_working_directory)) {
