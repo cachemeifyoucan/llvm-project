@@ -36,6 +36,12 @@ def err_cas_missing_input_cache_entry : Error<
 def warn_clang_cache_disabled_caching: Warning<
   "caching disabled because %0">,
   InGroup<DiagGroup<"clang-cache">>;
+def err_clang_cache_failed_execution: Error<
+  "clang-cache failed to execute compiler: %0">;
+def err_clang_cache_cannot_find_binary: Error<
+  "clang-cache cannot find compiler binary %0">;
+def err_clang_cache_missing_compiler_command: Error<
+  "missing compiler command for clang-cache">;
 def err_caching_backend_fail: Error<
   "caching backend error: %0">, DefaultFatal;
 

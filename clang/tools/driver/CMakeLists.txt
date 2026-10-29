@@ -42,6 +42,7 @@ endif()
 
 add_clang_tool(clang
   driver.cpp
+  CacheLauncherMode.cpp
   cc1_main.cpp
   cc1as_main.cpp
   cc1gen_reproducer_main.cpp
@@ -95,6 +96,8 @@ set(HLSL_LINK clang-dxc)
 foreach(link ${CLANG_LINKS_TO_CREATE} ${HLSL_LINK})
   add_clang_symlink(${link} clang)
 endforeach()
+# Adding `clang-cache` tool as a symlink to clang.
+add_clang_symlink(clang-cache clang)
 
 # Configure plist creation for OS X.
 set (TOOL_INFO_PLIST "Info.plist" CACHE STRING "Plist name")
