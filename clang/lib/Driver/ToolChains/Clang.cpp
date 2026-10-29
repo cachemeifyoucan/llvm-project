@@ -5156,7 +5156,9 @@ renderDebugOptions(const ToolChain &TC, const Driver &D, const llvm::Triple &T,
   addDebugPrefixMapArg(D, TC, Args, CmdArgs);
 
   // Add the output path to the object file for CodeView debug infos.
-  if (EmitCodeView && Output.isFilename())
+  // Skip this for temp depscan reponse file name.
+  if (EmitCodeView && Output.isFilename() &&
+      Output.getType() != types::TY_ResponseFile)
     addDebugObjectName(Args, CmdArgs, DebugCompilationDir,
                        Output.getFilename());
 }
@@ -5318,13 +5320,16 @@ void Clang::AddPrefixMappingOptions(const ArgList &Args, ArgStringList &CmdArgs,
   }
 }
 
-void Clang::ConstructJob(Compilation &C, const JobAction &JA,
+void Clang::ConstructJob(Compilation &C, const JobAction &Job,
                          const InputInfo &Output, const InputInfoList &Inputs,
                          const ArgList &Args, const char *LinkingOutput) const {
   const auto &TC = getToolChain();
   const llvm::Triple &RawTriple = TC.getTriple();
   const llvm::Triple &Triple = TC.getEffectiveTriple();
   const std::string &TripleStr = Triple.getTriple();
+  const JobAction &JA = isa<DepscanJobAction>(Job)
+                            ? cast<DepscanJobAction>(Job).getScanningJobAction()
+                            : Job;
 
   bool KernelOrKext =
       Args.hasArg(options::OPT_mkernel, options::OPT_fapple_kext);
@@ -5401,10 +5406,80 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (IsIAMCU && types::isCXX(Input.getType()))
     D.Diag(diag::err_drv_clang_unsupported) << "C++ for IAMCU";
 
+  {
+    const OptSpecifier DepScanOpts[] = {options::OPT_fdepscan_EQ};
+
+    // Handle depscan.
+    if (Job.getKind() == Action::DepscanJobClass) {
+      CmdArgs.push_back("-cc1depscan");
+
+      // Pass depscan related options to cc1depscan.
+      Args.addAllArgs(CmdArgs, DepScanOpts);
+
+      assert(Output.isFilename() && "Depscan needs to have file output");
+      CmdArgs.push_back("-o");
+      CmdArgs.push_back(Output.getFilename());
+      CmdArgs.push_back("-cc1-args");
+    } else if (Arg *A = Args.getLastArg(options::OPT_fdepscan_EQ)) {
+      if (A->getValue() == llvm::StringLiteral("off")) {
+        // Claim depscan args.
+        for (auto Opt : DepScanOpts)
+          Args.ClaimAllArgs(Opt);
+      }
+    }
+  }
+
   // Invoke ourselves in -cc1 mode.
   //
   // FIXME: Implement custom jobs for internal actions.
   CmdArgs.push_back("-cc1");
+
+  // Handle response file input.
+  if (Inputs.front().getType() == types::TY_ResponseFile) {
+    // Render response file input first.
+    assert(Inputs.size() == 1 && "Only one response file input");
+    auto &II = Inputs.front();
+    assert(II.isFilename() && "Should be response file");
+    SmallString<128> InputName("@");
+    InputName += II.getFilename();
+    CmdArgs.push_back(C.getArgs().MakeArgString(InputName));
+
+    // FIXME: The -cc1depscan job should include the -o for the -cc1 job that
+    // follows it in -cc1-args, but it doesn't currently have access to that
+    // filename. To fix this, we need to somehow route the final output type
+    // into Depscan ConstructJob.
+    // FIXME: This intermediate output file will adds 3-4% of overhead comparing
+    // to passing all the cc1 args in the memory. The fix might be pin DepScan
+    // job in-process and pass cc1 args in memory instead of creating an actual
+    // file here.
+    if (Output.isFilename()) {
+      CmdArgs.push_back("-o");
+      // Fix up the output file if it is a relative path to
+      // `-working-directory`.
+      SmallString<128> OutPath(
+          Args.getLastArgValue(options::OPT_working_directory));
+      StringRef Out = Output.getFilename();
+      if (llvm::sys::path::is_relative(Out) && !OutPath.empty()) {
+        llvm::sys::path::append(OutPath, Output.getFilename());
+        Out = OutPath.str();
+      }
+      CmdArgs.push_back(Args.MakeArgString(Out));
+    }
+    // FIXME: Clean up this code and factor out the common logic (see the end of
+    // the function)
+    const char *Exec = D.getDriverProgramPath();
+    if (D.CC1Main && !D.CCGenDiagnostics) {
+      // Invoke the CC1 directly in this process
+      C.addCommand(std::make_unique<CC1Command>(
+          Job, *this, ResponseFileSupport::AtFileUTF8(), Exec, CmdArgs, Inputs,
+          Output));
+    } else {
+      C.addCommand(std::make_unique<Command>(Job, *this,
+                                             ResponseFileSupport::AtFileUTF8(),
+                                             Exec, CmdArgs, Inputs, Output));
+    }
+    return;
+  }
 
   // Add the "effective" target triple.
   CmdArgs.push_back("-triple");
@@ -5658,7 +5733,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (SymbolGraphDirArg)
       SymbolGraphDirArg->render(Args, CmdArgs);
   } else {
-    assert((isa<CompileJobAction>(JA) || isa<BackendJobAction>(JA)) &&
+    assert((isa<CompileJobAction>(JA) || isa<BackendJobAction>(JA) ||
+            isa<DepscanJobAction>(JA)) &&
            "Invalid action for clang tool.");
     if (JA.getType() == types::TY_Nothing) {
       CmdArgs.push_back("-fsyntax-only");
@@ -5885,7 +5961,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     }
 
     C.addCommand(std::make_unique<Command>(
-        JA, *this, ResponseFileSupport::AtFileUTF8(), D.getDriverProgramPath(),
+        Job, *this, ResponseFileSupport::AtFileUTF8(), D.getDriverProgramPath(),
         CmdArgs, Inputs, Output, D.getPrependArg()));
     return;
   }
@@ -8756,11 +8832,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (D.CC1Main && !D.CCGenDiagnostics) {
     // Invoke the CC1 directly in this process
     C.addCommand(std::make_unique<CC1Command>(
-        JA, *this, ResponseFileSupport::AtFileUTF8(), Exec, CmdArgs, Inputs,
+        Job, *this, ResponseFileSupport::AtFileUTF8(), Exec, CmdArgs, Inputs,
         Output, D.getPrependArg()));
   } else {
     C.addCommand(std::make_unique<Command>(
-        JA, *this, ResponseFileSupport::AtFileUTF8(), Exec, CmdArgs, Inputs,
+        Job, *this, ResponseFileSupport::AtFileUTF8(), Exec, CmdArgs, Inputs,
         Output, D.getPrependArg()));
   }
 

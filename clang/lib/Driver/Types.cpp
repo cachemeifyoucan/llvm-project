@@ -174,6 +174,7 @@ bool types::isAcceptedByClang(ID Id) {
   case TY_CIR:
   case TY_CIRBC:
   case TY_API_INFO:
+  case TY_ResponseFile:
     return true;
   }
 }

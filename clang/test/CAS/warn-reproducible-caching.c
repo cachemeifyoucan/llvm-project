@@ -32,6 +32,13 @@
 // RUN: not %clang @%t/pch.rsp 2>&1 | FileCheck %s --check-prefix=PCH-ERROR
 // PCH-ERROR: error: encountered non-reproducible token, caching failed
 
+// The same through the driver.
+// RUN: %clang -target x86_64-apple-macos11 -fsyntax-only %t/t.c -isystem %t/sys 2>&1 | FileCheck %s --check-prefix=NOWARN --allow-empty
+// RUN: %clang -target x86_64-apple-macos11 -c %t/t.c -o %t/t.o -isystem %t/sys -Werror \
+// RUN:   -fdepscan=inline -Xclang -fcas-path -Xclang %t/cas -Xclang -fcache-compile-job 2>&1 | FileCheck %s --check-prefix=WARN
+// RUN: not %clang -target x86_64-apple-macos11 -c %t/t.c -o %t/t.o -isystem %t/sys -Werror=reproducible-caching \
+// RUN:   -fdepscan=inline -Xclang -fcas-path -Xclang %t/cas -Xclang -fcache-compile-job 2>&1 | FileCheck %s --check-prefix=ERROR
+
 //--- t.c
 #include <sys.h>
 

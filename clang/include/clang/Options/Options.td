@@ -9332,6 +9332,12 @@ def fdepscan_EQ : Joined<["-"], "fdepscan=">,
              " 'daemon' (see -fdepscan-share and -fdepscan-share-parent),"
              " 'inline', or"
              " 'off' (default).">;
+def fdepscan : Flag<["-"], "fdepscan">,
+    Group<f_Group>, HelpText<"Turn on -fdepscan=auto.">,
+    Alias<fdepscan_EQ>, AliasArgs<["auto"]>;
+def fno_depscan : Flag<["-"], "fno-depscan">,
+    Group<f_Group>,
+    Alias<fdepscan_EQ>, AliasArgs<["off"]>;
 
 // CAS prefix map options.
 //
