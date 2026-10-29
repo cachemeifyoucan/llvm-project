@@ -4,6 +4,8 @@ add_clang_unittest(ClangCASTests
   CLANG_LIBS
   clangBasic
   clangCAS
+  clangDependencyScanning
+  clangTooling
   LINK_LIBS
   LLVMTestingSupport
   LLVM_COMPONENTS

@@ -20,6 +20,7 @@ llvm_canonicalize_cmake_booleans(
   LLVM_ENABLE_ZSTD
   LLVM_ENABLE_PER_TARGET_RUNTIME_DIR
   LLVM_ENABLE_THREADS
+  LLVM_ENABLE_ONDISK_CAS
   LLVM_ENABLE_REVERSE_ITERATION
   LLVM_INCLUDE_EXAMPLES
   LLVM_LINK_LLVM_DYLIB
@@ -91,6 +92,7 @@ list(APPEND CLANG_TEST_DEPS
   apinotes-test
   c-index-test
   clang
+  clang-cas-test
   clang-fuzzer-dictionary
   clang-resource-headers
   clang-format-check-format
@@ -166,6 +168,7 @@ if( NOT CLANG_BUILT_STANDALONE )
     llvm-ar
     llvm-as
     llvm-bcanalyzer
+    llvm-cas
     llvm-cat
     llvm-cxxfilt
     llvm-dis

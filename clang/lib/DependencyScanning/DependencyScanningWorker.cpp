@@ -19,6 +19,7 @@
 #include "clang/Serialization/ObjectFilePCHContainerReader.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/CAS/CASProvidingFileSystem.h"
 #include "llvm/Option/Option.h"
 #include "llvm/Support/AdvisoryLock.h"
 #include "llvm/Support/CrashRecoveryContext.h"
@@ -965,6 +966,12 @@ public:
     if (CI.getDiagnostics().hasErrorOccurred())
       return nullptr;
 
+    // Normally this would be handled by GeneratePCHAction.
+    // FIXME: once the CI is shared across TUs, see if we can hoist this into CI
+    // initialization.
+    if (CI.getFrontendOpts().ProgramAction == frontend::GeneratePCH)
+      CI.getLangOpts().CompilingPCH = true;
+
     if (!Controller.initialize(CI, *OriginalInvocation))
       return nullptr;
 
@@ -1034,6 +1041,12 @@ DependencyScanningWorker::makeEffectiveVFS(
     IntrusiveRefCntPtr<llvm::vfs::FileSystem> OverlayFS) const {
   IntrusiveRefCntPtr<llvm::vfs::FileSystem> FS = DepFS;
   if (OverlayFS) {
+    // If we are using a CAS, we need to provide the fake input file in a
+    // CASProvidingFS for include-tree.
+    if (auto *IncludeTree =
+            std::get_if<IncludeTreeCompilation>(&Service.getOpts().Compilation))
+      OverlayFS = llvm::cas::createCASProvidingFileSystem(IncludeTree->CAS,
+                                                          std::move(OverlayFS));
     auto NewFS =
         llvm::makeIntrusiveRefCnt<llvm::vfs::OverlayFileSystem>(std::move(FS));
     NewFS->pushOverlay(std::move(OverlayFS));

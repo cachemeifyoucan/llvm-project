@@ -1,4 +1,5 @@
 set(LLVM_LINK_COMPONENTS
+  CAS
   Option
   FrontendOpenMP
   Support
@@ -39,6 +40,7 @@ add_clang_library(clangTooling
   clangAST
   clangASTMatchers
   clangBasic
+  clangCAS
   clangDependencyScanning
   clangDriver
   clangOptions

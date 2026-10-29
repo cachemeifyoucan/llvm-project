@@ -360,6 +360,70 @@ TEST(DependencyScanner, ScanDepsWithModuleLookup) {
   EXPECT_EQ(InterceptFS->ReadFiles, std::vector<std::string>{"test.m"});
 }
 
+TEST(DependencyScanner, NoNegativeCacheCAS) {
+  StringRef CWD = "/root";
+
+  std::shared_ptr<ObjectStore> DB = llvm::cas::createInMemoryCAS();
+  std::shared_ptr<ActionCache> Cache = llvm::cas::createInMemoryActionCache();
+  auto VFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
+  VFS->setCurrentWorkingDirectory(CWD);
+  std::unique_ptr<llvm::vfs::FileSystem> CASFS =
+      llvm::cas::createCASProvidingFileSystem(DB, VFS);
+
+  auto Sept = llvm::sys::path::get_separator();
+  std::string HeaderPath =
+      std::string(llvm::formatv("{0}root{0}header.h", Sept));
+  std::string Test0Path =
+      std::string(llvm::formatv("{0}root{0}test0.cpp", Sept));
+  std::string Test1Path =
+      std::string(llvm::formatv("{0}root{0}test1.cpp", Sept));
+
+  VFS->addFile(Test0Path, 0,
+               llvm::MemoryBuffer::getMemBuffer(
+                   "#if __has_include(\"header.h\")\n#endif"));
+  VFS->addFile(Test1Path, 0,
+               llvm::MemoryBuffer::getMemBuffer("#include \"header.h\""));
+
+  DependencyScanningServiceOptions Opts;
+  Opts.MakeVFS = [VFS] { return VFS; };
+  Opts.Compilation = IncludeTreeCompilation{CASOptions(), DB, Cache};
+  DependencyScanningService Service(std::move(Opts));
+  DependencyScanningTool ScanTool(Service);
+
+  TextDiagnosticBuffer DiagConsumer;
+
+  std::vector<std::string> CommandLine0 = {"clang",
+                                           "-target",
+                                           "x86_64-apple-macosx10.7",
+                                           "-c",
+                                           "test0.cpp",
+                                           "-o"
+                                           "test0.cpp.o"};
+  std::vector<std::string> CommandLine1 = {"clang",
+                                           "-target",
+                                           "x86_64-apple-macosx10.7",
+                                           "-c",
+                                           "test1.cpp",
+                                           "-o"
+                                           "test1.cpp.o"};
+
+  ASSERT_TRUE(ScanTool
+                  .getDependencyFile(
+                      CommandLine0, CWD,
+                      CallbackActionController::lookupUnreachableModuleOutput,
+                      DiagConsumer)
+                  .has_value());
+
+  VFS->addFile(HeaderPath, 0, llvm::MemoryBuffer::getMemBuffer(""));
+
+  ASSERT_TRUE(ScanTool
+                  .getDependencyFile(
+                      CommandLine1, CWD,
+                      CallbackActionController::lookupUnreachableModuleOutput,
+                      DiagConsumer)
+                  .has_value());
+}
+
 // When scanning from a TU buffer, the in-memory TU lives ONLY
 // in the overlay filesystem built from that buffer, never on the base VFS. If
 // DependencyScanningWorker::computeDependencies moves the overlay away before

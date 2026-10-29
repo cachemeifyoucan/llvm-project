@@ -11,9 +11,11 @@ add_clang_library(clangDependencyScanning
   DependencyScanningFilesystem.cpp
   DependencyScanningService.cpp
   DependencyScanningWorker.cpp
+  IncludeTreeActionController.cpp
   DependencyScanningUtils.cpp
   InProcessModuleCache.cpp
   ModuleDepCollector.cpp
+  ScanAndUpdateArgs.cpp
 
   DEPENDS
   ClangDriverOptions

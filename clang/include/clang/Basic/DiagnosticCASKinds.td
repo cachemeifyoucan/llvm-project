@@ -21,5 +21,7 @@ def err_cas_cannot_parse_root_id
       DefaultFatal;
 def err_cas_filesystem_cannot_be_initialized : Error<
   "CAS filesystem cannot be initialized from root-id '%0': %1">, DefaultFatal;
+def err_cas_depscan_failed: Error<
+  "CAS-based dependency scan failed: %0">, DefaultFatal;
 
 } // let Component = "CAS" in

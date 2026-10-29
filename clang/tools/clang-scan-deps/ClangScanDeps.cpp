@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/CAS/IncludeTree.h"
 #include "clang/DependencyScanning/DependencyScanningService.h"
 #include "clang/DependencyScanning/DependencyScanningWorker.h"
 #include "clang/Driver/Compilation.h"
@@ -18,6 +19,9 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/CAS/ActionCache.h"
+#include "llvm/CAS/CASProvidingFileSystem.h"
+#include "llvm/CAS/ObjectStore.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Driver.h"
 #include "llvm/Support/FileSystem.h"
@@ -80,6 +84,12 @@ enum class ScanningOutputFormat {
   /// explicitly building modules.
   Full,
 
+  /// This emits the CAS ID of the include tree.
+  IncludeTree,
+
+  /// This emits the full dependency graph but with include tree.
+  FullIncludeTree,
+
   /// This outputs the dependency graph for standard c++ modules in P1689R5
   /// format.
   P1689,
@@ -107,6 +117,10 @@ static bool EmitVisibleModules;
 static llvm::BumpPtrAllocator Alloc;
 static llvm::StringSaver Saver{Alloc};
 static std::vector<const char *> CommandLine;
+static std::string OnDiskCASPath;
+static std::string CASPluginPath;
+static std::vector<std::pair<std::string, std::string>> CASPluginOptions;
+static bool InMemoryCAS;
 
 #ifndef NDEBUG
 static constexpr bool DoRoundTripDefault = true;
@@ -157,6 +171,10 @@ static void ParseArgs(int argc, char **argv) {
         llvm::StringSwitch<std::optional<ScanningOutputFormat>>(A->getValue())
             .Case("make", ScanningOutputFormat::Make)
             .Case("p1689", ScanningOutputFormat::P1689)
+            .Case("experimental-include-tree",
+                  ScanningOutputFormat::IncludeTree)
+            .Case("experimental-include-tree-full",
+                  ScanningOutputFormat::FullIncludeTree)
             .Case("experimental-full", ScanningOutputFormat::Full)
             .Default(std::nullopt);
     if (!FormatType) {
@@ -257,6 +275,17 @@ static void ParseArgs(int argc, char **argv) {
   PrintTiming = Args.hasArg(OPT_print_timing);
 
   EmitVisibleModules = Args.hasArg(OPT_emit_visible_modules);
+
+  InMemoryCAS = Args.hasArg(OPT_in_memory_cas);
+
+  if (const llvm::opt::Arg *A = Args.getLastArg(OPT_cas_path_EQ))
+    OnDiskCASPath = A->getValue();
+  if (const llvm::opt::Arg *A = Args.getLastArg(OPT_fcas_plugin_path_EQ))
+    CASPluginPath = A->getValue();
+  for (const llvm::opt::Arg *A : Args.filtered(OPT_fcas_plugin_option_EQ)) {
+    auto [L, R] = StringRef(A->getValue()).split('=');
+    CASPluginOptions.emplace_back(std::string(L), std::string(R));
+  }
 
   Verbose = Args.hasArg(OPT_verbose);
 
@@ -365,6 +394,54 @@ static void handleDiagnostics(StringRef Input, StringRef Diagnostics,
   });
 }
 
+static bool
+handleIncludeTreeToolResult(llvm::cas::ObjectStore &CAS,
+                            const std::string &Input,
+                            Expected<cas::IncludeTreeRoot> &MaybeTree,
+                            llvm::raw_ostream &OS, SharedStream &Errs) {
+  if (!MaybeTree) {
+    llvm::handleAllErrors(
+        MaybeTree.takeError(), [&Input, &Errs](llvm::StringError &Err) {
+          Errs.applyLocked([&](raw_ostream &OS) {
+            OS << "Error while scanning dependencies for " << Input << ":\n";
+            OS << Err.getMessage();
+            OS << "\n";
+          });
+        });
+    return true;
+  }
+  auto printError = [&Errs](llvm::Error &&E) -> bool {
+    llvm::handleAllErrors(std::move(E), [&Errs](llvm::StringError &Err) {
+      Errs.applyLocked([&](raw_ostream &OS) {
+        OS << "Error while printing include tree: " << Err.getMessage() << "\n";
+      });
+    });
+    return true;
+  };
+
+  std::optional<llvm::Error> E;
+  MaybeTree->getID().print(OS);
+  OS << " - " << Input << "\n";
+  E = MaybeTree->print(OS);
+  if (*E)
+    return printError(std::move(*E));
+  return false;
+}
+
+static bool outputFormatRequiresCAS() {
+  switch (Format) {
+  case ScanningOutputFormat::IncludeTree:
+  case ScanningOutputFormat::FullIncludeTree:
+    return true;
+  default:
+    return false;
+  }
+}
+
+static bool useCAS() {
+  return InMemoryCAS || !OnDiskCASPath.empty() || outputFormatRequiresCAS();
+}
+
 template <typename Container>
 static auto toJSONStrings(llvm::json::OStream &JOS, Container &&Strings) {
   return [&JOS, Strings = std::forward<Container>(Strings)] {
@@ -424,6 +501,7 @@ public:
     ID.FileName = std::string(Input);
     ID.ContextHash = std::move(TUDeps.ID.ContextHash);
     ID.FileDeps = std::move(TUDeps.FileDeps);
+    ID.IncludeTreeID = std::move(TUDeps.IncludeTreeID);
     ID.NamedModule = std::move(TUDeps.ID.ModuleName);
     ID.NamedModuleDeps = std::move(TUDeps.NamedModuleDeps);
     ID.ClangModuleDeps = std::move(TUDeps.ClangModuleDeps);
@@ -543,6 +621,10 @@ public:
               if (I.DriverCommandLine.empty()) {
                 for (const auto &Cmd : I.Commands) {
                   JOS.object([&] {
+                    if (I.IncludeTreeID)
+                      JOS.attribute("cas-include-tree-id",
+                                    StringRef(*I.IncludeTreeID));
+
                     JOS.attribute("clang-context-hash",
                                   StringRef(I.ContextHash));
                     if (!I.NamedModule.empty())
@@ -567,6 +649,10 @@ public:
                 }
               } else {
                 JOS.object([&] {
+                  if (I.IncludeTreeID)
+                    JOS.attribute("cas-include-tree-id",
+                                  StringRef(*I.IncludeTreeID));
+
                   JOS.attribute("clang-context-hash", StringRef(I.ContextHash));
                   if (!I.NamedModule.empty())
                     JOS.attribute("named-module", (I.NamedModule));
@@ -634,6 +720,7 @@ private:
     std::string FileName;
     std::string ContextHash;
     std::vector<std::string> FileDeps;
+    std::optional<std::string> IncludeTreeID;
     std::string NamedModule;
     std::vector<std::string> NamedModuleDeps;
     std::vector<ModuleID> ClangModuleDeps;
@@ -983,6 +1070,28 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
   }();
   SharedStream DependencyOS(ThreadUnsafeDependencyOS);
 
+  DiagnosticOptions DiagOpts;
+  auto DiagsConsumer =
+      std::make_unique<TextDiagnosticPrinter>(llvm::errs(), DiagOpts, false);
+  DiagnosticsEngine Diags(new DiagnosticIDs(), DiagOpts);
+  Diags.setClient(DiagsConsumer.get(), /*ShouldOwnClient=*/false);
+
+  CASOptions CASOpts;
+  CASOpts.CASPath = OnDiskCASPath;
+  CASOpts.PluginPath = CASPluginPath;
+  CASOpts.PluginOptions = CASPluginOptions;
+
+  std::shared_ptr<llvm::cas::ObjectStore> CAS;
+  std::shared_ptr<llvm::cas::ActionCache> Cache;
+  if (useCAS()) {
+    if (!InMemoryCAS)
+      CASOpts.ensurePersistentCAS();
+
+    std::tie(CAS, Cache) = CASOpts.createDatabases(Diags);
+    if (!CAS)
+      return 1;
+  }
+
   std::vector<tooling::CompileCommand> Inputs =
       AdjustingCompilations->getAllCompileCommands();
 
@@ -999,8 +1108,21 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
     return {};
   };
 
-  if (Format == ScanningOutputFormat::Full)
+  if (Format == ScanningOutputFormat::Full ||
+      Format == ScanningOutputFormat::FullIncludeTree)
     FD.emplace(!ModuleNames ? Inputs.size() : 0);
+
+  struct DepTreeResult {
+    size_t Index;
+    std::string Filename;
+    std::optional<Expected<cas::IncludeTreeRoot>> MaybeIncludeTree;
+
+    DepTreeResult(size_t Index, std::string Filename,
+                  Expected<cas::IncludeTreeRoot> Tree)
+        : Index(Index), Filename(std::move(Filename)),
+          MaybeIncludeTree(std::move(Tree)) {}
+  };
+  SmallVector<DepTreeResult> TreeResults;
 
   std::atomic<size_t> NumStatusCalls = 0;
   std::atomic<size_t> NumOpenFileForReadCalls = 0;
@@ -1041,6 +1163,12 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
           DependencyOS.applyLocked([&](raw_ostream &OS) { OS << *MaybeFile; });
         else
           HadErrors = true;
+      } else if (Format == ScanningOutputFormat::IncludeTree) {
+        auto MaybeTree = WorkerTool.getIncludeTree(Input->CommandLine, CWD,
+                                                   LookupOutput, DiagConsumer);
+        std::unique_lock<std::mutex> LockGuard(Lock);
+        TreeResults.emplace_back(LocalIndex, std::move(Filename),
+                                 std::move(MaybeTree));
       } else if (Format == ScanningOutputFormat::P1689) {
         // It is useful to generate the make-format dependency output during
         // the scanning for P1689. Otherwise the users need to scan again for
@@ -1164,7 +1292,15 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
   };
 
   DependencyScanningServiceOptions Opts;
+  Opts.MakeVFS = [CAS] {
+    auto FS = llvm::vfs::createPhysicalFileSystem();
+    if (CAS)
+      FS = llvm::cas::createCASProvidingFileSystem(CAS, std::move(FS));
+    return FS;
+  };
   Opts.Mode = ScanMode;
+  if (CAS && Cache)
+    Opts.Compilation = IncludeTreeCompilation{CASOpts, CAS, Cache};
   Opts.OptimizeArgs = OptimizeArgs;
   // The scanner currently ignores `#pragma clang diagnostic ...` and emits
   // unexpected diagnostics. Work around this for now by disabling warnings
@@ -1234,9 +1370,21 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
     if (FD && FD->roundTripCommands(llvm::errs()))
       HadErrors = true;
 
-  if (Format == ScanningOutputFormat::Full)
+  std::sort(TreeResults.begin(), TreeResults.end(),
+            [](const DepTreeResult &LHS, const DepTreeResult &RHS) -> bool {
+              return LHS.Index < RHS.Index;
+            });
+  if (Format == ScanningOutputFormat::IncludeTree) {
+    for (auto &TreeResult : TreeResults) {
+      if (handleIncludeTreeToolResult(*CAS, TreeResult.Filename,
+                                      *TreeResult.MaybeIncludeTree,
+                                      ThreadUnsafeDependencyOS, Errs))
+        HadErrors = true;
+    }
+  } else if (Format == ScanningOutputFormat::Full ||
+             Format == ScanningOutputFormat::FullIncludeTree) {
     FD->printFullOutput(ThreadUnsafeDependencyOS);
-  else if (Format == ScanningOutputFormat::P1689)
+  } else if (Format == ScanningOutputFormat::P1689)
     PD.printDependencies(ThreadUnsafeDependencyOS);
 
   return HadErrors;

@@ -13,13 +13,24 @@
 #include "clang/DependencyScanning/DependencyScanningUtils.h"
 #include "clang/DependencyScanning/DependencyScanningWorker.h"
 #include "clang/DependencyScanning/ModuleDepCollector.h"
+#include "clang/DependencyScanning/ScanAndUpdateArgs.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/CAS/CASID.h"
 #include <optional>
 #include <string>
 #include <vector>
 
+namespace llvm {
+namespace cas {
+class ObjectProxy;
+} // namespace cas
+} // namespace llvm
+
 namespace clang {
+namespace cas {
+class IncludeTreeRoot;
+}
 namespace tooling {
 
 struct P1689Rule {
@@ -77,6 +88,11 @@ public:
                                         MakeformatOutputPath, DiagConsumer);
   }
 
+  Expected<cas::IncludeTreeRoot>
+  getIncludeTree(const std::vector<std::string> &CommandLine, StringRef CWD,
+                 dependencies::LookupModuleOutputCallback LookupModuleOutput,
+                 DiagnosticConsumer &DiagConsumer);
+
   /// Given a Clang driver command-line for a translation unit, gather the
   /// modular dependencies and return the information needed for explicit build.
   ///
@@ -122,6 +138,20 @@ public:
   llvm::vfs::TracingFileSystem *getWorkerTracingVFS() const {
     return Worker.getTracingVFS();
   }
+
+  std::shared_ptr<cas::ObjectStore> getCAS() const {
+    return Worker.getService().getCAS();
+  }
+  CASOptions getCASOpts() const { return Worker.getService().getCASOpts(); }
+
+  static std::unique_ptr<clang::dependencies::DependencyActionController>
+  createActionController(
+      clang::dependencies::DependencyScanningWorker &Worker,
+      clang::dependencies::LookupModuleOutputCallback LookupModuleOutput);
+
+  std::unique_ptr<clang::dependencies::DependencyActionController>
+  createActionController(
+      clang::dependencies::LookupModuleOutputCallback LookupModuleOutput);
 
 private:
   dependencies::DependencyScanningWorker Worker;

@@ -10,6 +10,8 @@
 #include "clang/Basic/AtomicLineLogger.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticFrontend.h"
+#include "clang/CAS/IncludeTree.h"
+#include "clang/DependencyScanning/CachingActions.h"
 #include "clang/DependencyScanning/DependencyScanningWorker.h"
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
@@ -19,12 +21,15 @@
 #include "clang/Options/Options.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/iterator.h"
+#include "llvm/CAS/CASProvidingFileSystem.h"
+#include "llvm/CAS/ObjectStore.h"
 #include "llvm/TargetParser/Host.h"
 #include <optional>
 
 using namespace clang;
 using namespace tooling;
 using namespace dependencies;
+using llvm::Error;
 
 namespace {
 /// Prints out all of the gathered dependencies into a string.
@@ -219,6 +224,81 @@ std::optional<std::string> DependencyScanningTool::getDependencyFile(
   return Output;
 }
 
+namespace {
+class EmptyDependencyConsumer : public DependencyConsumer {
+  void
+  handleDependencyOutputOpts(const DependencyOutputOptions &Opts) override {}
+
+  void handleFileDependency(StringRef Filename) override {}
+
+  void handlePrebuiltModuleDependency(PrebuiltModuleDep PMD) override {}
+
+  void handleModuleDependency(ModuleDeps MD) override {}
+
+  void handleVisibleModule(std::string ModuleName) override {}
+
+  void handleDirectModuleDependency(ModuleID ID) override {}
+
+  void handleContextHash(std::string Hash) override {}
+};
+
+/// Returns an IncludeTree containing the dependencies.
+class GetIncludeTree : public EmptyDependencyConsumer {
+public:
+  void handleIncludeTreeID(std::string ID) override { IncludeTreeID = ID; }
+
+  Expected<cas::IncludeTreeRoot> getIncludeTree() {
+    if (IncludeTreeID) {
+      auto ID = DB.parseID(*IncludeTreeID);
+      if (!ID)
+        return ID.takeError();
+      auto Ref = DB.getReference(*ID);
+      if (!Ref)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            llvm::Twine("missing expected include-tree ") + ID->toString());
+      return cas::IncludeTreeRoot::get(DB, *Ref);
+    }
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "failed to get include-tree");
+  }
+
+  GetIncludeTree(cas::ObjectStore &DB) : DB(DB) {}
+
+private:
+  cas::ObjectStore &DB;
+  std::optional<std::string> IncludeTreeID;
+};
+
+struct AlreadyReportedDiagnosticError
+    : llvm::ErrorInfo<AlreadyReportedDiagnosticError> {
+  static char ID;
+
+  void log(raw_ostream &OS) const override {
+    OS << "failed to scan dependencies";
+  }
+
+  std::error_code convertToErrorCode() const override {
+    return llvm::inconvertibleErrorCode();
+  }
+};
+
+char AlreadyReportedDiagnosticError::ID = 0;
+} // namespace
+
+Expected<cas::IncludeTreeRoot> DependencyScanningTool::getIncludeTree(
+    const std::vector<std::string> &CommandLine, StringRef CWD,
+    LookupModuleOutputCallback LookupModuleOutput,
+    DiagnosticConsumer &DiagsConsumer) {
+  GetIncludeTree Consumer(*getCAS());
+  auto Controller = createIncludeTreeActionController(LookupModuleOutput,
+                                                      getCASOpts(), *getCAS());
+  if (!computeDependencies(Worker, CWD, CommandLine, Consumer, *Controller,
+                           DiagsConsumer))
+    return llvm::make_error<AlreadyReportedDiagnosticError>();
+  return Consumer.getIncludeTree();
+}
+
 std::optional<P1689Rule> DependencyScanningTool::getP1689ModuleDependencyFile(
     const CompileCommand &Command, StringRef CWD, std::string &MakeformatOutput,
     std::string &MakeformatOutputPath, DiagnosticConsumer &DiagConsumer) {
@@ -330,7 +410,7 @@ DependencyScanningTool::getTranslationUnitDependencies(
     LookupModuleOutputCallback LookupModuleOutput,
     std::optional<llvm::MemoryBufferRef> TUBuffer) {
   FullDependencyConsumer Consumer(AlreadySeen);
-  CallbackActionController Controller(LookupModuleOutput);
+  auto Controller = createActionController(LookupModuleOutput);
 
   // If we are scanning from a TUBuffer, create an overlay filesystem with the
   // input as an in-memory file and add it to the command line.
@@ -342,7 +422,7 @@ DependencyScanningTool::getTranslationUnitDependencies(
     CommandLine = CommandLineWithTUBufferInput;
   }
 
-  if (!computeDependencies(Worker, CWD, CommandLine, Consumer, Controller,
+  if (!computeDependencies(Worker, CWD, CommandLine, Consumer, *Controller,
                            DiagConsumer, std::move(OverlayFS)))
     return std::nullopt;
   return Consumer.takeTranslationUnitDeps();
@@ -398,4 +478,21 @@ bool DependencyScanningTool::getByNameDependencies(
   return Worker.computeDependenciesByName(CWD, CC1CommandLine,
                                           std::move(OverlayFS), DiagConsumer,
                                           Controller, getNextName, DepConsumer);
+}
+
+std::unique_ptr<DependencyActionController>
+DependencyScanningTool::createActionController(
+    DependencyScanningWorker &Worker,
+    LookupModuleOutputCallback LookupModuleOutput) {
+  if (auto *IncludeTree = std::get_if<IncludeTreeCompilation>(
+          &Worker.getService().getOpts().Compilation))
+    return createIncludeTreeActionController(
+        LookupModuleOutput, IncludeTree->CASOpts, *IncludeTree->CAS);
+  return std::make_unique<CallbackActionController>(LookupModuleOutput);
+}
+
+std::unique_ptr<DependencyActionController>
+DependencyScanningTool::createActionController(
+    LookupModuleOutputCallback LookupModuleOutput) {
+  return createActionController(Worker, std::move(LookupModuleOutput));
 }
