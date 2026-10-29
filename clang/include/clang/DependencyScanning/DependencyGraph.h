@@ -193,6 +193,9 @@ struct TranslationUnitDeps {
   /// includes both direct and transitive module dependencies.
   std::vector<std::string> VisibleModules;
 
+  /// The include-tree for input file dependency tree.
+  std::optional<std::string> IncludeTreeID;
+
   /// A list of the C++20 named modules this translation unit depends on.
   std::vector<std::string> NamedModuleDeps;
 

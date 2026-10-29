@@ -21,6 +21,7 @@ TranslationUnitDeps FullDependencyConsumer::takeTranslationUnitDeps() {
   TU.PrebuiltModuleDeps = std::move(PrebuiltModuleDeps);
   TU.VisibleModules = std::move(VisibleModules);
   TU.Commands = std::move(Commands);
+  TU.IncludeTreeID = std::move(IncludeTreeID);
 
   for (auto &&M : ClangModuleDeps) {
     auto &MD = M.second;

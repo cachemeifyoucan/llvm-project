@@ -10,9 +10,13 @@
 #define LLVM_CLANG_DEPENDENCYSCANNING_DEPENDENCYSCANNINGSERVICE_H
 
 #include "clang/Basic/AtomicLineLogger.h"
+#include "clang/CAS/CASOptions.h"
 #include "clang/DependencyScanning/DependencyScanningFilesystem.h"
 #include "clang/DependencyScanning/InProcessModuleCache.h"
 #include "llvm/ADT/BitmaskEnum.h"
+#include "llvm/CAS/ActionCache.h"
+
+#include <variant>
 
 namespace clang {
 namespace dependencies {
@@ -59,6 +63,18 @@ enum class ScanningOptimizations {
   Default = All & (~IgnoreCWD)
 };
 
+struct RegularCompilation {};
+struct IncludeTreeCompilation {
+  /// The CAS configuration.
+  CASOptions CASOpts;
+  /// The CAS database to use.
+  std::shared_ptr<cas::ObjectStore> CAS;
+  /// The CAS cache to use.
+  std::shared_ptr<cas::ActionCache> Cache;
+};
+using CompilationMode =
+    std::variant<RegularCompilation, IncludeTreeCompilation>;
+
 #undef DSS_LAST_BITMASK_ENUM
 
 bool shouldCacheNegativeStatsDefault();
@@ -78,6 +94,8 @@ struct DependencyScanningServiceOptions {
       MakeVFS; // = [] { return llvm::vfs::createPhysicalFileSystem(); }
   /// Whether to use optimized dependency directive scan or full preprocessing.
   ScanningMode Mode = ScanningMode::DependencyDirectivesScan;
+  /// How to compile the resulting modules and translation units.
+  CompilationMode Compilation = RegularCompilation{};
   /// How to optimize resulting explicit module command lines.
   ScanningOptimizations OptimizeArgs = ScanningOptimizations::Default;
   /// Whether the scanner should emit warnings.
@@ -146,6 +164,9 @@ public:
     ModCacheEntries.addInvalidatedPath(Path);
   }
 
+  CASOptions getCASOpts() const;
+  std::shared_ptr<cas::ObjectStore> getCAS() const;
+  std::shared_ptr<cas::ActionCache> getActionCache() const;
   AtomicLineLogger &getLogger() { return Logger; }
 
 private:

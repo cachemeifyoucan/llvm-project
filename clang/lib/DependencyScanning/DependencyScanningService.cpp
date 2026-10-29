@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/DependencyScanning/DependencyScanningService.h"
+#include "llvm/CAS/ActionCache.h"
+#include "llvm/CAS/ObjectStore.h"
 
 #include "llvm/Support/Chrono.h"
 #include "llvm/Support/Process.h"
@@ -42,3 +44,25 @@ DependencyScanningServiceOptions::DependencyScanningServiceOptions()
     : MakeVFS([] { return llvm::vfs::createPhysicalFileSystem(); }),
       BuildSessionTimestamp(
           llvm::sys::toTimeT(std::chrono::system_clock::now())) {}
+
+CASOptions DependencyScanningService::getCASOpts() const {
+  if (auto *IncludeTree =
+          std::get_if<IncludeTreeCompilation>(&Opts.Compilation))
+    return IncludeTree->CASOpts;
+  return {};
+}
+
+std::shared_ptr<cas::ObjectStore> DependencyScanningService::getCAS() const {
+  if (auto *IncludeTree =
+          std::get_if<IncludeTreeCompilation>(&Opts.Compilation))
+    return IncludeTree->CAS;
+  return nullptr;
+}
+
+std::shared_ptr<cas::ActionCache>
+DependencyScanningService::getActionCache() const {
+  if (auto *IncludeTree =
+          std::get_if<IncludeTreeCompilation>(&Opts.Compilation))
+    return IncludeTree->Cache;
+  return nullptr;
+}

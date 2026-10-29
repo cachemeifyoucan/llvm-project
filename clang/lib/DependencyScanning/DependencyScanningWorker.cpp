@@ -372,6 +372,11 @@ static void initializeScanCompilerInstance(
     IntrusiveRefCntPtr<llvm::vfs::FileSystem> FS,
     DiagnosticConsumer *DiagConsumer, DependencyScanningService &Service,
     IntrusiveRefCntPtr<DependencyScanningWorkerFilesystem> DepFS) {
+  // Pre-set the shared CAS databases on the scan instance so that code which
+  // calls getOrCreateObjectStore()/getOrCreateActionCache() before
+  // createVirtualFileSystem() gets the correct shared instance.
+  ScanInstance.setCASDatabases(Service.getCAS(), Service.getActionCache());
+
   ScanInstance.setBuildingModule(false);
   ScanInstance.createVirtualFileSystem(FS, DiagConsumer);
   ScanInstance.createDiagnostics(DiagConsumer, /*ShouldOwnClient=*/false);
@@ -986,6 +991,10 @@ public:
         });
     if (!Success)
       return false;
+    // Forward any CAS results to consumer.
+    std::string ID = ModuleInvocation.getFrontendOpts().CASIncludeTreeID;
+    if (!ID.empty())
+      Consumer.handleIncludeTreeID(std::move(ID));
     Consumer.handleBuildCommand(
         {Executable.str(), ModuleInvocation.getCC1CommandLine()});
     return true;
