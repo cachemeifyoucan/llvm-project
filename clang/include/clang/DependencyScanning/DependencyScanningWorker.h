@@ -65,6 +65,17 @@ public:
       DiagnosticConsumer &DiagConsumer,
       IntrusiveRefCntPtr<llvm::vfs::FileSystem> OverlayFS = nullptr);
 
+  /// Scan from a compiler invocation.
+  /// If \p DiagGenerationAsCompilation is true it will generate error
+  /// diagnostics same way as the normal compilation, with "N errors generated"
+  /// message and the serialized diagnostics file emitted if the
+  /// \p DiagOpts.DiagnosticSerializationFile setting is set for the invocation.
+  void computeDependenciesFromCompilerInvocation(
+      std::shared_ptr<CompilerInvocation> Invocation,
+      StringRef WorkingDirectory, DependencyConsumer &Consumer,
+      DependencyActionController &Controller, DiagnosticConsumer &DiagsConsumer,
+      raw_ostream *VerboseOS);
+
   /// By-name scanning over a single cc1 command line. Builds a scanning session
   /// local to this call, then pulls module names from \p getNextName until it
   /// returns std::nullopt. Results flow to \p DepConsumer (per-name status via

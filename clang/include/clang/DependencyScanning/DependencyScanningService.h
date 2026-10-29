@@ -121,6 +121,10 @@ struct DependencyScanningServiceOptions {
   /// reported via \c DependencyScanningService::addInvalidatedPath instead of
   /// the filesystem.
   bool ValidateAgainstInvalidatedPaths = false;
+  /// Whether the scanner should mimic the behavior of the compilation itself.
+  /// This enables generation of dependency files, and emission of full
+  /// diagnostics.
+  bool AsCompilation = false;
   /// The path to a log file, which logs timing of actions performed by
   /// the dependency scanner.
   std::string LogPath;

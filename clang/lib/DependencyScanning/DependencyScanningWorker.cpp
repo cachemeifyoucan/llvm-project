@@ -398,7 +398,8 @@ createScanCompilerInvocation(const CompilerInvocation &Invocation,
                              DependencyActionController &Controller) {
   auto ScanInvocation = std::make_shared<CompilerInvocation>(Invocation);
 
-  sanitizeDiagOpts(ScanInvocation->getDiagnosticOpts());
+  if (!Service.getOpts().AsCompilation)
+    sanitizeDiagOpts(ScanInvocation->getDiagnosticOpts());
 
   ScanInvocation->getPreprocessorOpts().AllowPCHWithDifferentModulesCachePath =
       true;
@@ -487,7 +488,8 @@ computePrebuiltModulesASTMap(CompilerInstance &ScanInstance,
 }
 
 static std::unique_ptr<DependencyOutputOptions>
-createDependencyOutputOptions(const CompilerInvocation &Invocation) {
+createDependencyOutputOptions(const CompilerInvocation &Invocation,
+                              bool ForceIncludeSystemHeaders) {
   auto Opts = std::make_unique<DependencyOutputOptions>(
       Invocation.getDependencyOutputOpts());
   // We need at least one -MT equivalent for the generator of make dependency
@@ -495,7 +497,11 @@ createDependencyOutputOptions(const CompilerInvocation &Invocation) {
   if (Opts->Targets.empty())
     Opts->Targets = {deduceDepTarget(Invocation.getFrontendOpts().OutputFile,
                                      Invocation.getFrontendOpts().Inputs)};
-  Opts->IncludeSystemHeaders = true;
+  if (ForceIncludeSystemHeaders) {
+    // Only 'Make' scanning needs to force this because that mode depends on
+    // getting the dependencies directly from \p DependencyFileGenerator.
+    Opts->IncludeSystemHeaders = true;
+  }
 
   return Opts;
 }
@@ -508,6 +514,11 @@ initializeScanInstanceDependencyCollector(
     DependencyActionController &Controller,
     PrebuiltModulesAttrsMap PrebuiltModulesASTMap,
     SmallVector<StringRef> &StableDirs) {
+  // FIXME: Find a way to implement this via a DependencyConsumer.
+  if (Service.getOpts().AsCompilation && !DepOutputOpts->OutputFile.empty())
+    ScanInstance.addDependencyCollector(
+        std::make_shared<DependencyFileGenerator>(*DepOutputOpts));
+
   auto MDC = std::make_shared<ModuleDepCollector>(
       Service, std::move(DepOutputOpts), ScanInstance, Controller, Inv,
       std::move(PrebuiltModulesASTMap), StableDirs);
@@ -726,6 +737,9 @@ class CompilerInstanceWithContext {
   // Context - used by AsyncScan's prescan pass
   IntrusiveRefCntPtr<llvm::vfs::FileSystem> ScanFS;
 
+  // Context - verbose output stream, used by the cc1depscan path.
+  raw_ostream *VerboseOS = nullptr;
+
   // Compiler Instance
   std::unique_ptr<CompilerInstance> CIPtr;
 
@@ -774,6 +788,9 @@ class CompilerInstanceWithContext {
         Worker.PCHContainerOps, std::move(ModCache));
     auto &CI = *CIPtr;
 
+    if (VerboseOS)
+      CIPtr->setVerboseOutputStream(*VerboseOS);
+
     initializeScanCompilerInstance(CI, ScanFS, DiagConsumer, Worker.Service,
                                    Worker.DepFS);
 
@@ -784,14 +801,20 @@ class CompilerInstanceWithContext {
       return false;
 
     PrebuiltModuleASTMap = std::move(*MaybePrebuiltModulesASTMap);
-    OutputOpts = createDependencyOutputOptions(*OriginalInvocation);
+    // FIXME: Set ForceIncludeSystemHeaders for Make consumers.
+    OutputOpts = createDependencyOutputOptions(
+        *OriginalInvocation, /*ForceIncludeSystemHeaders=*/false);
 
     // We do not create the target in initializeScanCompilerInstance because
     // setting it here is unique for by-name lookups. We create the target only
     // once here, and the information is reused for all computeDependencies
     // calls. We do not need to call createTarget explicitly if we go through
     // CompilerInstance::ExecuteAction to perform scanning.
-    return CI.createTarget();
+    if (CI.createTarget()) {
+      CI.initializeDelayedInputFileFromCAS();
+      return true;
+    }
+    return false;
   }
 
   bool prescanModulesAsync(AsyncModuleCompiles &Compiles,
@@ -828,6 +851,24 @@ public:
       DependencyActionController &Controller) {
     CompilerInstanceWithContext CIWC(Worker, CWD, CC1CommandLine);
     if (!CIWC.initialize(Controller, DiagEngine, std::move(OverlayFS)))
+      return std::nullopt;
+    return std::move(CIWC);
+  }
+
+  /// Initialize from an already-built CompilerInvocation (the cc1depscan /
+  /// include-tree path). Seeds OriginalInvocation by copy and goes straight to
+  /// the invocation -> CompilerInstance back half.
+  static std::optional<CompilerInstanceWithContext>
+  initializeFromInvocation(DependencyScanningWorker &Worker, StringRef CWD,
+                           std::shared_ptr<CompilerInvocation> Invocation,
+                           DiagnosticConsumer &DiagConsumer,
+                           raw_ostream *VerboseOS,
+                           DependencyActionController &Controller) {
+    CompilerInstanceWithContext CIWC(Worker, CWD, {"<clang>"});
+    CIWC.VerboseOS = VerboseOS;
+    CIWC.ScanFS = Worker.makeEffectiveVFS(CWD, /*OverlayFS=*/nullptr);
+    CIWC.OriginalInvocation = std::make_unique<CompilerInvocation>(*Invocation);
+    if (!CIWC.initializeScanInstance(Controller, &DiagConsumer))
       return std::nullopt;
     return std::move(CIWC);
   }
@@ -1117,6 +1158,45 @@ bool DependencyScanningWorker::computeDependencies(
   });
 
   return Success && Scanned;
+}
+
+void DependencyScanningWorker::computeDependenciesFromCompilerInvocation(
+    std::shared_ptr<CompilerInvocation> Invocation, StringRef WorkingDirectory,
+    DependencyConsumer &DepsConsumer, DependencyActionController &Controller,
+    DiagnosticConsumer &DiagsConsumer, raw_ostream *VerboseOS) {
+  DepFS->setCurrentWorkingDirectory(WorkingDirectory);
+
+  // Adjust the invocation.
+  auto &Frontend = Invocation->getFrontendOpts();
+  Frontend.OutputFile = "/dev/null";
+  Frontend.DisableFree = false;
+
+  // // Reset dependency options.
+  // Dependencies = DependencyOutputOptions();
+  // Dependencies.IncludeSystemHeaders = true;
+  // Dependencies.OutputFile = "/dev/null";
+
+  // Make the output file path absolute relative to WorkingDirectory.
+  std::string &DepFile = Invocation->getDependencyOutputOpts().OutputFile;
+  if (!DepFile.empty() && !llvm::sys::path::is_absolute(DepFile)) {
+    // FIXME: On Windows, WorkingDirectory is insufficient for making an
+    // absolute path if OutputFile has a root name.
+    llvm::SmallString<128> Path = StringRef(DepFile);
+    llvm::sys::path::make_absolute(WorkingDirectory, Path);
+    DepFile = Path.str().str();
+  }
+
+  auto MaybeCIWC = CompilerInstanceWithContext::initializeFromInvocation(
+      *this, WorkingDirectory, std::move(Invocation), DiagsConsumer, VerboseOS,
+      Controller);
+
+  if (!MaybeCIWC)
+    return;
+
+  // Ignore result; we're just collecting dependencies.
+  //
+  // FIXME: will clients other than -cc1scand care?
+  (void)MaybeCIWC->scanTranslationUnit(DepsConsumer, Controller);
 }
 
 bool DependencyScanningWorker::computeDependenciesByName(

@@ -86,6 +86,9 @@ static const char *GetStableCStr(llvm::StringSet<> &SavedStrings, StringRef S) {
 
 extern int cc1_main(ArrayRef<const char *> Argv, const char *Argv0,
                     void *MainAddr);
+
+extern int cc1depscan_main(ArrayRef<const char *> Argv, const char *Argv0,
+                           void *MainAddr);
 extern int cc1as_main(ArrayRef<const char *> Argv, const char *Argv0,
                       void *MainAddr);
 extern int cc1gen_reproducer_main(ArrayRef<const char *> Argv,
@@ -227,6 +230,9 @@ static int ExecuteCC1Tool(SmallVectorImpl<const char *> &ArgV,
   void *GetExecutablePathVP = (void *)(intptr_t)GetExecutablePath;
   if (Tool == "-cc1")
     return cc1_main(ArrayRef(ArgV).slice(1), ArgV[0], GetExecutablePathVP);
+  if (Tool == "-cc1depscan")
+    return cc1depscan_main(ArrayRef(ArgV).slice(2), ArgV[0],
+                           GetExecutablePathVP);
   if (Tool == "-cc1as")
     return cc1as_main(ArrayRef(ArgV).slice(2), ArgV[0], GetExecutablePathVP);
   if (Tool == "-cc1gen-reproducer")

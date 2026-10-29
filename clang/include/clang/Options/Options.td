@@ -9322,6 +9322,25 @@ def fsycl_is_host : Flag<["-"], "fsycl-is-host">,
 // CAS Options
 //===----------------------------------------------------------------------===//
 
+// Driver CAS options.
+def fdepscan_EQ : Joined<["-"], "fdepscan=">,
+    Group<f_Group>,
+    Visibility<[ClangOption, CLOption]>,
+    HelpText<"Scan for dependencies ahead of compiling, generating a"
+             " pruned CAS tree to send to -fcas-fs. Values are"
+             " 'auto',"
+             " 'daemon' (see -fdepscan-share and -fdepscan-share-parent),"
+             " 'inline', or"
+             " 'off' (default).">;
+
+// -cc1depscan options.
+//
+// FIXME: Add to their own group; add NoDriverOption and DepscanOption flags.
+def cc1_args : Option<["-"], "cc1-args", KIND_REMAINING_ARGS>,
+    HelpText<"pass cc1 options to depscan afterwards">;
+def dump_depscan_tree_EQ : Option<["-"], "dump-depscan-tree=", KIND_JOINED>,
+    HelpText<"emit the CAS identifier for the tree instead of the full -cc1">;
+
 // -cc1 options. These should be available in the driver too, but the driver
 // doesn't currently support most of them. For example, the driver should
 // read only from -fcas-fs if specified, in which case the -fdepscan

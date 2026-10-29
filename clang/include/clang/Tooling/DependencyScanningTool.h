@@ -87,6 +87,15 @@ public:
                  dependencies::LookupModuleOutputCallback LookupModuleOutput,
                  DiagnosticConsumer &DiagConsumer);
 
+  /// If \p DiagGenerationAsCompilation is true it will generate error
+  /// diagnostics same way as the normal compilation, with "N errors generated"
+  /// message and the serialized diagnostics file emitted if the
+  /// \p DiagOpts.DiagnosticSerializationFile setting is set for the invocation.
+  Expected<cas::IncludeTreeRoot> getIncludeTreeFromCompilerInvocation(
+      std::shared_ptr<CompilerInvocation> Invocation, StringRef CWD,
+      clang::dependencies::LookupModuleOutputCallback LookupModuleOutput,
+      DiagnosticConsumer &DiagsConsumer, raw_ostream *VerboseOS);
+
   /// Given a Clang driver command-line for a translation unit, gather the
   /// modular dependencies and return the information needed for explicit build.
   ///
@@ -170,6 +179,12 @@ bool computeDependencies(
     DiagnosticConsumer &DiagConsumer,
     IntrusiveRefCntPtr<llvm::vfs::FileSystem> OverlayFS = nullptr);
 } // end namespace tooling
+
+Expected<llvm::cas::CASID> scanAndUpdateCC1InlineWithTool(
+    tooling::DependencyScanningTool &Tool, DiagnosticConsumer &DiagsConsumer,
+    raw_ostream *VerboseOS, CompilerInvocation &Invocation,
+    StringRef WorkingDirectory);
+
 } // end namespace clang
 
 #endif // LLVM_CLANG_TOOLING_DEPENDENCYSCANNINGTOOL_H

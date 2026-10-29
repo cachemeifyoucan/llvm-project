@@ -1,6 +1,7 @@
 set( LLVM_LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
   Analysis
+  CAS
   CodeGen
   Core
   IPO
@@ -44,6 +45,7 @@ add_clang_tool(clang
   cc1_main.cpp
   cc1as_main.cpp
   cc1gen_reproducer_main.cpp
+  cc1depscan_main.cpp
 
   DEPENDS
   intrinsics_gen
@@ -59,12 +61,15 @@ setup_host_tool(clang CLANG clang_exe clang_target)
 clang_target_link_libraries(clang
   PRIVATE
   clangBasic
+  clangCAS
   clangCodeGen
+  clangDependencyScanning
   clangDriver
   clangFrontend
   clangFrontendTool
   clangOptions
   clangSerialization
+  clangTooling # FIXME: This is here just for DependencyScanningTool.
   )
 
 if(WIN32 AND NOT CYGWIN)
