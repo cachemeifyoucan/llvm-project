@@ -45,6 +45,10 @@ class MemoryBuffer;
 class MemoryBufferRef;
 class Twine;
 
+namespace cas {
+class ObjectRef;
+}
+
 namespace vfs {
 
 /// The result of a \p status operation.

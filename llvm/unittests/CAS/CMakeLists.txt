@@ -38,6 +38,7 @@ set(LLVM_LINK_COMPONENTS
 
 add_llvm_unittest(CASTests
   ActionCacheTest.cpp
+  CASBackedFileSystemTest.cpp
   CASTestConfig.cpp
   NamedValuesSchemaTest.cpp
   ObjectStoreTest.cpp
