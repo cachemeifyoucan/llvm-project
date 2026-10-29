@@ -8,7 +8,6 @@
 
 #include "clang/Frontend/CASDependencyCollector.h"
 #include "clang/Basic/DiagnosticCAS.h"
-#include "llvm/CAS/CASOutputBackend.h"
 #include "llvm/CAS/ObjectStore.h"
 #include "llvm/Support/VirtualOutputBackends.h"
 
