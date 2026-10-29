@@ -35,7 +35,8 @@ static void updateRelativePath(std::string &Path,
 
 void dependencies::configureInvocationForCaching(CowCompilerInvocation &CI,
                                                  CASOptions CASOpts,
-                                                 std::string InputID) {
+                                                 std::string InputID,
+                                                 CachingInputKind InputKind) {
   CI.getMutCASOpts() = std::move(CASOpts);
   auto &FrontendOpts = CI.getMutFrontendOpts();
   FrontendOpts.CacheCompileJob = true;
@@ -54,85 +55,100 @@ void dependencies::configureInvocationForCaching(CowCompilerInvocation &CI,
 
   // "Fix" the CAS options.
   auto &FileSystemOpts = CI.getMutFileSystemOpts();
-  using llvm::sys::path::is_relative;
-  // The only way to get relative source paths is a relative main file or
-  // include directory, since includes are resolved relative to , and
-  // includer-relative search is relative to an already-included file.
-  bool HasRelativeIncludes = [&] {
-    if (!FileSystemOpts.WorkingDir.empty())
-      return false; // -working-directory makes all paths absolute.
-    // FIXME: this might have false positives if a relative search path is not
-    // used. Ideally we would calculate this when the include tree is built.
-    if (!HSOpts.Sysroot.empty() && is_relative(HSOpts.Sysroot))
-      return true;
-    if (is_relative(HSOpts.ResourceDir))
-      return true;
-    for (auto &Input : FrontendOpts.Inputs)
-      if (Input.isFile() && is_relative(Input.getFile()))
+  switch (InputKind) {
+  case CachingInputKind::IncludeTree: {
+    using llvm::sys::path::is_relative;
+    // The only way to get relative source paths is a relative main file or
+    // include directory, since includes are resolved relative to , and
+    // includer-relative search is relative to an already-included file.
+    bool HasRelativeIncludes = [&] {
+      if (!FileSystemOpts.WorkingDir.empty())
+        return false; // -working-directory makes all paths absolute.
+      // FIXME: this might have false positives if a relative search path is not
+      // used. Ideally we would calculate this when the include tree is built.
+      if (!HSOpts.Sysroot.empty() && is_relative(HSOpts.Sysroot))
         return true;
-    for (auto &Entry : HSOpts.UserEntries)
-      if (Entry.IgnoreSysRoot || HSOpts.Sysroot.empty())
-        if (is_relative(Entry.Path))
+      if (is_relative(HSOpts.ResourceDir))
+        return true;
+      for (auto &Input : FrontendOpts.Inputs)
+        if (Input.isFile() && is_relative(Input.getFile()))
           return true;
-    for (auto &Prefix : HSOpts.SystemHeaderPrefixes)
-      if (is_relative(Prefix.Prefix))
-        return true;
-    return false;
-  }();
+      for (auto &Entry : HSOpts.UserEntries)
+        if (Entry.IgnoreSysRoot || HSOpts.Sysroot.empty())
+          if (is_relative(Entry.Path))
+            return true;
+      for (auto &Prefix : HSOpts.SystemHeaderPrefixes)
+        if (is_relative(Prefix.Prefix))
+          return true;
+      return false;
+    }();
 
-  FrontendOpts.CASIncludeTreeID = std::move(InputID);
-  FrontendOpts.Inputs.clear();
-  FrontendOpts.ModuleMapFiles.clear();
-  HeaderSearchOptions OriginalHSOpts;
-  std::swap(HSOpts, OriginalHSOpts);
-  HSOpts.ModulesSkipDiagnosticOptions =
-      OriginalHSOpts.ModulesSkipDiagnosticOptions;
-  // Preserve sysroot path to accommodate lookup for 'SDKSettings.json' during
-  // availability checking.
-  HSOpts.Sysroot = std::move(OriginalHSOpts.Sysroot);
-  // Preserve resource-dir, which is added back by cc1_main if missing, and
-  // affects the cache key.
-  HSOpts.ResourceDir = std::move(OriginalHSOpts.ResourceDir);
-  // Preserve fmodule-file options.
-  HSOpts.PrebuiltModuleFiles = std::move(OriginalHSOpts.PrebuiltModuleFiles);
-  HSOpts.UseBuiltinIncludes = false;
-  HSOpts.UseStandardSystemIncludes = false;
-  HSOpts.UseStandardCXXIncludes = false;
+    FrontendOpts.CASIncludeTreeID = std::move(InputID);
+    FrontendOpts.Inputs.clear();
+    FrontendOpts.ModuleMapFiles.clear();
+    HeaderSearchOptions OriginalHSOpts;
+    std::swap(HSOpts, OriginalHSOpts);
+    HSOpts.ModulesSkipDiagnosticOptions =
+        OriginalHSOpts.ModulesSkipDiagnosticOptions;
+    // Preserve sysroot path to accommodate lookup for 'SDKSettings.json' during
+    // availability checking.
+    HSOpts.Sysroot = std::move(OriginalHSOpts.Sysroot);
+    // Preserve resource-dir, which is added back by cc1_main if missing, and
+    // affects the cache key.
+    HSOpts.ResourceDir = std::move(OriginalHSOpts.ResourceDir);
+    // Preserve fmodule-file options.
+    HSOpts.PrebuiltModuleFiles = std::move(OriginalHSOpts.PrebuiltModuleFiles);
+    HSOpts.UseBuiltinIncludes = false;
+    HSOpts.UseStandardSystemIncludes = false;
+    HSOpts.UseStandardCXXIncludes = false;
 
-  auto &PPOpts = CI.getMutPreprocessorOpts();
-  // We don't need this because we save the contents of the PCH file in the
-  // include tree root.
-  PPOpts.ImplicitPCHInclude.clear();
-  if (FrontendOpts.ProgramAction != frontend::GeneratePCH) {
-    // We don't need these because we save the contents of the predefines
-    // buffer in the include tree. But if we generate a PCH file we still need
-    // to keep them as preprocessor options so that they are preserved in a
-    // PCH file and compared with the preprocessor options of the dep-scan
-    // invocation that uses the PCH.
-    PPOpts.Macros.clear();
-    PPOpts.MacroIncludes.clear();
-    PPOpts.Includes.clear();
+    auto &PPOpts = CI.getMutPreprocessorOpts();
+    // We don't need this because we save the contents of the PCH file in the
+    // include tree root.
+    PPOpts.ImplicitPCHInclude.clear();
+    if (FrontendOpts.ProgramAction != frontend::GeneratePCH) {
+      // We don't need these because we save the contents of the predefines
+      // buffer in the include tree. But if we generate a PCH file we still need
+      // to keep them as preprocessor options so that they are preserved in a
+      // PCH file and compared with the preprocessor options of the dep-scan
+      // invocation that uses the PCH.
+      PPOpts.Macros.clear();
+      PPOpts.MacroIncludes.clear();
+      PPOpts.Includes.clear();
+    }
+    // Disable `-gmodules` to avoid debug info referencing a non-existent PCH
+    // filename.
+    // FIXME: we should also allow -gmodules if there is no PCH involved.
+    CodeGenOpts.DebugTypeExtRefs = false;
+    HSOpts.ModuleFormat = "raw";
+    // Clear APINotes options.
+    CI.getMutAPINotesOpts().ModuleSearchPaths = {};
+
+    // Reset debug/coverage compilation directory if source paths are absolute.
+    if (!HasRelativeIncludes) {
+      CodeGenOpts.DebugCompilationDir.clear();
+      CodeGenOpts.CoverageCompilationDir.clear();
+    }
+
+    // Update output paths, and clear working directory.
+    auto CWD = FileSystemOpts.WorkingDir;
+    updateRelativePath(FrontendOpts.OutputFile, CWD);
+    updateRelativePath(CI.getMutDiagnosticOpts().DiagnosticSerializationFile,
+                       CWD);
+    updateRelativePath(CI.getMutDiagnosticOpts().DiagnosticLogFile, CWD);
+    updateRelativePath(CI.getMutDependencyOutputOpts().OutputFile, CWD);
+    FileSystemOpts.WorkingDir.clear();
+    break;
   }
-  // Disable `-gmodules` to avoid debug info referencing a non-existent PCH
-  // filename.
-  // FIXME: we should also allow -gmodules if there is no PCH involved.
-  CodeGenOpts.DebugTypeExtRefs = false;
-  HSOpts.ModuleFormat = "raw";
-  // Clear APINotes options.
-  CI.getMutAPINotesOpts().ModuleSearchPaths = {};
-
-  // Reset debug/coverage compilation directory if source paths are absolute.
-  if (!HasRelativeIncludes) {
-    CodeGenOpts.DebugCompilationDir.clear();
-    CodeGenOpts.CoverageCompilationDir.clear();
+  case CachingInputKind::CachedCompilation: {
+    FrontendOpts.Inputs.clear();
+    FrontendOpts.CASInputFileCacheKey = std::move(InputID);
+    FrontendOpts.ModuleMapFiles.clear();
+    // TODO: Strip more of the things we already strip for include-tree.
+    break;
+  case CachingInputKind::Object: {
+    assert(false && "Object should not be available during scanning");
   }
-
-  // Update output paths, and clear working directory.
-  auto CWD = FileSystemOpts.WorkingDir;
-  updateRelativePath(FrontendOpts.OutputFile, CWD);
-  updateRelativePath(CI.getMutDiagnosticOpts().DiagnosticSerializationFile,
-                     CWD);
-  updateRelativePath(CI.getMutDiagnosticOpts().DiagnosticLogFile, CWD);
-  updateRelativePath(CI.getMutDependencyOutputOpts().OutputFile, CWD);
-  FileSystemOpts.WorkingDir.clear();
+  }
+  }
 }

@@ -265,8 +265,9 @@ TEST_F(CASIncludeTreeTest, IncompatibleArguments) {
   };
 
   EXPECT_EQ(parse({"-fcas-include-tree", "id", "-x", "c", "t.c"}),
-            std::vector<std::string>{"passing input files is incompatible with "
-                                     "'-fcas-include-tree'"});
+            std::vector<std::string>{
+                "passing input files is incompatible with "
+                "'-fcas-include-tree' and '-fcas-input-file-cache-key'"});
   EXPECT_EQ(parse({"-fcas-include-tree", "id"}),
             std::vector<std::string>{
                 "missing '-x' input kind when using '-fcas-include-tree'"});

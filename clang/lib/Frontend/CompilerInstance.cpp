@@ -24,6 +24,7 @@
 #include "clang/CAS/IncludeTree.h"
 #include "clang/Config/config.h"
 #include "clang/Frontend/ChainedDiagnosticConsumer.h"
+#include "clang/Frontend/CompileJobCacheResult.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
@@ -946,7 +947,8 @@ std::unique_ptr<raw_pwrite_stream> CompilerInstance::createOutputFile(
 void CompilerInstance::initializeDelayedInputFileFromCAS() {
   auto &Opts = Invocation->getFrontendOpts();
   // Return if no need to initialize or already initialized.
-  if (Opts.CASIncludeTreeID.empty() || !Opts.Inputs.empty())
+  if ((Opts.CASIncludeTreeID.empty() && Opts.CASInputFileCASID.empty()) ||
+      !Opts.Inputs.empty())
     return;
 
   assert(hasDiagnostics() && "need diagnostics engine for CAS loading");
@@ -980,6 +982,34 @@ void CompilerInstance::initializeDelayedInputFileFromCAS() {
     auto InputFilename = FilenameBlob->getData();
     Opts.Inputs.emplace_back(Root->getRef(), InputFilename, Opts.DashX,
                              /*isSystem=*/false);
+    return;
+  }
+  if (!Opts.CASInputFileCASID.empty()) {
+    auto ID = CAS.parseID(Opts.CASInputFileCASID);
+    if (!ID)
+      return reportError(ID.takeError());
+    auto ValueRef = CAS.getReference(*ID);
+    if (!ValueRef)
+      return reportError(llvm::cas::ObjectStore::createUnknownObjectError(*ID));
+
+    auto Schema = cas::CompileJobResultSchema::create(CAS);
+    if (!Schema)
+      return reportError(Schema.takeError());
+    auto Result = Schema->load(*ValueRef);
+    if (!Result)
+      return reportError(Result.takeError());
+    auto Output =
+        Result->getOutput(cas::CompileJobCacheResult::OutputKind::MainOutput);
+    if (!Output)
+      return reportError(
+          llvm::createStringError("unable to get the main compilation output"));
+
+    auto OutProxy = CAS.getProxy(Output->Object);
+    if (!OutProxy)
+      return reportError(OutProxy.takeError());
+
+    auto Buff = llvm::MemoryBufferRef(OutProxy->getData(), "<input>");
+    Opts.Inputs.emplace_back(Buff, Opts.DashX, /*IsSystem=*/false);
     return;
   }
 }

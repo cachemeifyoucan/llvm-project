@@ -33,6 +33,8 @@ class DiagnosticsEngine;
 
 enum class CachingInputKind {
   IncludeTree,
+  CachedCompilation,
+  Object,
 };
 
 /// Caching-related options for a given \c CompilerInvocation that are

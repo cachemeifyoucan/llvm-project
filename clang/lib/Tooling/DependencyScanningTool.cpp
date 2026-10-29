@@ -526,7 +526,8 @@ Expected<llvm::cas::CASID> clang::scanAndUpdateCC1InlineWithTool(
 
   Invocation.withCowRef<void>([&](CowCompilerInvocation &CowInvocation) {
     configureInvocationForCaching(CowInvocation, Tool.getCASOpts(),
-                                  Root->toString());
+                                  Root->toString(),
+                                  CachingInputKind::IncludeTree);
   });
   return *Root;
 }

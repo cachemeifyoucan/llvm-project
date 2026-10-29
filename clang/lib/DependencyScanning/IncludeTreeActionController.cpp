@@ -221,8 +221,25 @@ bool IncludeTreeActionController::initialize(
 
 bool IncludeTreeActionController::finalize(
     CompilerInstance &ScanInstance, CowCompilerInvocation &NewInvocation) {
+  auto GetInputCacheKey = [&]() -> std::optional<StringRef> {
+    if (NewInvocation.getFrontendOpts().Inputs.size() != 1)
+      return {};
+    const auto &FIF = NewInvocation.getFrontendOpts().Inputs.front();
+    if (!FIF.isFile())
+      return {};
+    auto It = OutputToCacheKey.find(FIF.getFile());
+    if (It == OutputToCacheKey.end())
+      return {};
+
+    return It->second;
+  };
+
   std::string InputID;
-  {
+  CachingInputKind InputKind;
+  if (auto InputCacheKey = GetInputCacheKey()) {
+    InputID = InputCacheKey->str();
+    InputKind = CachingInputKind::CachedCompilation;
+  } else {
     assert(!IncludeTreeResult);
     assert(BuilderStack.size() == 1);
     auto Builder = BuilderStack.pop_back_val();
@@ -234,9 +251,10 @@ bool IncludeTreeActionController::finalize(
       return false;
     }
     InputID = IncludeTreeResult->getID().toString();
+    InputKind = CachingInputKind::IncludeTree;
   }
 
-  configureInvocationForCaching(NewInvocation, CASOpts, InputID);
+  configureInvocationForCaching(NewInvocation, CASOpts, InputID, InputKind);
 
   auto &CAS = ScanInstance.getOrCreateObjectStore();
   // FIXME: Make this return an error and propagate it up.

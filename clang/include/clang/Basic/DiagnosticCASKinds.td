@@ -26,6 +26,12 @@ def err_cas_depscan_failed: Error<
 def err_cas_store: Error<"failed to store to CAS: %0">, DefaultFatal;
 def err_cas_missing_root_id : Error<
   "CAS missing expected root-id '%0'">, DefaultFatal;
+def err_cas_cannot_parse_input_cache_key : Error<
+  "CAS cannot parse input cache key '%0'">, DefaultFatal;
+def err_cas_cannot_lookup_input_cache_key : Error<
+  "CAS cannot lookup input cache key '%0'">, DefaultFatal;
+def err_cas_missing_input_cache_entry : Error<
+  "CAS missing expected input cache key '%0'">, DefaultFatal;
 
 def warn_clang_cache_disabled_caching: Warning<
   "caching disabled because %0">,

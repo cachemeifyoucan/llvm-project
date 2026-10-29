@@ -15,6 +15,7 @@
 #define LLVM_CLANG_DEPENDENCYSCANNING_SCANANDUPDATEARGS_H
 
 #include "clang/Basic/LLVM.h"
+#include "clang/Frontend/CompileJobCacheKey.h"
 #include "llvm/Support/Error.h"
 
 namespace llvm {
@@ -35,7 +36,8 @@ namespace dependencies {
 /// Apply CAS inputs for compilation caching to the given invocation, if
 /// enabled.
 void configureInvocationForCaching(CowCompilerInvocation &CI,
-                                   CASOptions CASOpts, std::string InputID);
+                                   CASOptions CASOpts, std::string InputID,
+                                   CachingInputKind InputKind);
 
 } // namespace dependencies
 } // end namespace clang

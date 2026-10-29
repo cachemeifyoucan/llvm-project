@@ -3435,7 +3435,7 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
   std::vector<std::string> Inputs = Args.getAllArgValues(OPT_INPUT);
   Opts.Inputs.clear();
 
-  if (!Opts.CASIncludeTreeID.empty()) {
+  if (!Opts.CASIncludeTreeID.empty() || !Opts.CASInputFileCacheKey.empty()) {
     if (!Inputs.empty())
       Diags.Report(diag::err_drv_inputs_and_cas_input);
 
