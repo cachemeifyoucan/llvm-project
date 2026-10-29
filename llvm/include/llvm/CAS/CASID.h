@@ -14,6 +14,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/Error.h"
 
 namespace llvm {
@@ -124,6 +125,28 @@ private:
 
   const CASContext *Context;
   SmallString<32> Hash;
+};
+
+/// This is used to workaround the issue of MSVC needing default-constructible
+/// types for \c std::promise/future.
+template <typename T> struct AsyncValue {
+  Expected<std::optional<T>> take() { return std::move(Value); }
+
+  AsyncValue(Error &&E) : Value(std::move(E)) {}
+  AsyncValue(T &&V) : Value(std::move(V)) {}
+  AsyncValue(std::nullopt_t) : Value(std::nullopt) {}
+  AsyncValue(Expected<std::optional<T>> &&Obj) : Value(std::move(Obj)) {}
+
+private:
+  Expected<std::optional<T>> Value;
+};
+
+class LLVM_ABI Cancellable {
+  virtual void anchor();
+
+public:
+  virtual ~Cancellable() {}
+  virtual void cancel() = 0;
 };
 
 } // namespace cas

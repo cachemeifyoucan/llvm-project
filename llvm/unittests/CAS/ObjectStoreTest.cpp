@@ -648,3 +648,62 @@ TEST_F(OnDiskCASTest, StandaloneMemoryBufferRecordWithRefs) {
   EXPECT_EQ(Data, Buffer->getBuffer());
   EXPECT_EQ('\0', *Buffer->getBufferEnd());
 }
+
+TEST_P(CASTest, GetProxyAsync) {
+  std::shared_ptr<ObjectStore> CAS = createObjectStore();
+
+  std::optional<ObjectProxy> Blob, Node;
+  ASSERT_THAT_ERROR(CAS->createProxy({}, "blob").moveInto(Blob), Succeeded());
+  ASSERT_THAT_ERROR(CAS->createProxy({Blob->getRef()}, "node").moveInto(Node),
+                    Succeeded());
+
+  // Future API.
+  {
+    std::optional<ObjectProxy> Loaded;
+    ASSERT_THAT_ERROR(
+        CAS->getProxyFuture(Node->getRef()).get().take().moveInto(Loaded),
+        Succeeded());
+    ASSERT_TRUE(Loaded);
+    EXPECT_EQ(Loaded->getID(), Node->getID());
+    EXPECT_EQ(Loaded->getData(), "node");
+    ASSERT_EQ(Loaded->getNumReferences(), 1u);
+    EXPECT_EQ(Loaded->getReference(0), Blob->getRef());
+  }
+
+  // Callback API, by ID and by reference.
+  auto LoadAsync = [&](auto IDOrRef) {
+    std::promise<AsyncProxyValue> Promise;
+    auto Future = Promise.get_future();
+    CAS->getProxyAsync(IDOrRef,
+                       [Promise = std::move(Promise)](
+                           Expected<std::optional<ObjectProxy>> Obj) mutable {
+                         Promise.set_value(std::move(Obj));
+                       });
+    return Future.get().take();
+  };
+  {
+    std::optional<ObjectProxy> Loaded;
+    ASSERT_THAT_ERROR(LoadAsync(Blob->getID()).moveInto(Loaded), Succeeded());
+    ASSERT_TRUE(Loaded);
+    EXPECT_EQ(Loaded->getData(), "blob");
+  }
+  {
+    std::optional<ObjectProxy> Loaded;
+    ASSERT_THAT_ERROR(LoadAsync(Blob->getRef()).moveInto(Loaded), Succeeded());
+    ASSERT_TRUE(Loaded);
+    EXPECT_EQ(Loaded->getID(), Blob->getID());
+  }
+
+  // An ID that is not known to this CAS is reported either as an error or as
+  // a missing object, depending on the implementation. Create it in another
+  // CAS of the same kind so that it uses the same hash schema.
+  std::shared_ptr<ObjectStore> OtherCAS = createObjectStore();
+  std::optional<CASID> UnknownID;
+  ASSERT_THAT_ERROR(OtherCAS->createProxy({}, "unknown").moveInto(UnknownID),
+                    Succeeded());
+  Expected<std::optional<ObjectProxy>> Missing = LoadAsync(*UnknownID);
+  if (Missing)
+    EXPECT_FALSE(*Missing);
+  else
+    consumeError(Missing.takeError());
+}
