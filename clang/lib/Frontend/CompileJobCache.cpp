@@ -13,8 +13,10 @@
 #include "clang/Frontend/CompileJobCacheKey.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/PreprocessorOptions.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/CAS/ActionCache.h"
 #include "llvm/CAS/CASOutputBackend.h"
+#include "llvm/Support/IOSandbox.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/PrefixMapper.h"
 #include "llvm/Support/ScopedDurationTimer.h"
@@ -43,6 +45,11 @@ public:
   bool prepareOutputCollection();
 
   void stopDiagnosticsCapture();
+
+  /// This is for an output file that was written directly on the file system.
+  /// It's a workaround until all compilation consumers adopt
+  /// \c llvm::vfs::OutputBackend.
+  Error addNonVirtualOutputFile(StringRef FilePath);
 
   /// Finish writing outputs from a computed result, after a cache miss.
   /// If SkipCache is true, it should not insert the ResultCacheKey into
@@ -338,9 +345,18 @@ bool CompileJobCache::finishComputedResult(CompilerInstance &Clang,
 
   DiagnosticsEngine &Diags = Clang.getDiagnostics();
 
+  bool UnsupportedOutput;
+  if (Error E = maybeIngestNonVirtualOutputFromFileSystem(Clang).moveInto(
+          UnsupportedOutput)) {
+    reportCachingBackendError(Diags, std::move(E));
+    return false;
+  }
+
   // Check if we encounter any source that would generate non-reproducible
   // outputs.
-  bool SkipCache = Clang.hasPreprocessor() && Clang.isSourceNonReproducible();
+  bool SkipCache =
+      (Clang.hasPreprocessor() && Clang.isSourceNonReproducible()) ||
+      UnsupportedOutput;
   if (SkipCache) {
     switch (Clang.getPreprocessorOpts().CachingDiagOption) {
     case CachingDiagKind::None:
@@ -361,6 +377,35 @@ bool CompileJobCache::finishComputedResult(CompilerInstance &Clang,
     return false;
   }
   return true;
+}
+
+Expected<bool> CompileJobCache::maybeIngestNonVirtualOutputFromFileSystem(
+    CompilerInstance &Clang) {
+  // FIXME: All consumers should adopt \c llvm::vfs::OutputBackend and this
+  // function should go away.
+
+  const auto &FrontendOpts = Clang.getFrontendOpts();
+  if (FrontendOpts.ProgramAction == frontend::RunAnalysis) {
+    StringRef OutputPath = FrontendOpts.OutputFile;
+    if (OutputPath.empty())
+      return false;
+    bool IsDirectory = [&] {
+      auto BypassSandbox = llvm::sys::sandbox::scopedDisable();
+      return llvm::sys::fs::is_directory(OutputPath);
+    }();
+    if (IsDirectory) {
+      // FIXME: A directory is produced for the 'html' output of the analyzer,
+      // support it for caching purposes.
+      Clang.getDiagnostics().Report(diag::warn_clang_cache_disabled_caching)
+          << "analyzer output is not supported";
+      return true;
+    }
+    if (Error E = CacheBackend->addNonVirtualOutputFile(OutputPath))
+      return std::move(E);
+    return false;
+  }
+
+  return false;
 }
 
 Expected<llvm::cas::ObjectRef> CompileJobCache::CachingOutputs::writeOutputs(
@@ -394,6 +439,22 @@ Expected<llvm::cas::ObjectRef> CompileJobCache::CachingOutputs::writeOutputs(
 
   // Cache the result.
   return CachedResultBuilder.build(*CAS);
+}
+
+Error CompileJobCache::CachingOutputs::addNonVirtualOutputFile(
+    StringRef FilePath) {
+  auto BypassSandbox = llvm::sys::sandbox::scopedDisable();
+
+  auto F = llvm::sys::fs::openNativeFileForRead(FilePath);
+  if (!F)
+    return F.takeError();
+  llvm::scope_exit CloseOnExit([&F]() { llvm::sys::fs::closeFile(*F); });
+
+  std::optional<llvm::cas::ObjectRef> ObjRef;
+  if (Error E = CAS->storeFromOpenFile(*F).moveInto(ObjRef))
+    return E;
+  CASOutputs->addObject(FilePath, *ObjRef);
+  return Error::success();
 }
 
 Error CompileJobCache::CachingOutputs::finishComputedResult(

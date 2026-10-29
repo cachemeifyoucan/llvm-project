@@ -27,6 +27,9 @@ def err_cas_store: Error<"failed to store to CAS: %0">, DefaultFatal;
 def err_cas_missing_root_id : Error<
   "CAS missing expected root-id '%0'">, DefaultFatal;
 
+def warn_clang_cache_disabled_caching: Warning<
+  "caching disabled because %0">,
+  InGroup<DiagGroup<"clang-cache">>;
 def err_caching_backend_fail: Error<
   "caching backend error: %0">, DefaultFatal;
 
