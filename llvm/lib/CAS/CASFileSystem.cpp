@@ -19,8 +19,7 @@ llvm::Expected<std::pair<std::unique_ptr<llvm::MemoryBuffer>, cas::ObjectRef>>
 CASBackedFileSystem::getBufferAndObjectRefForFile(const Twine &Name,
                                                   int64_t FileSize,
                                                   bool RequiresNullTerminator,
-                                                  bool IsVolatile,
-                                                  bool IsText) {
+                                                  bool IsVolatile) {
   auto F = openCASBackedFileForRead(Name);
   if (!F)
     return F.takeError();

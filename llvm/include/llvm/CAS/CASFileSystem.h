@@ -33,13 +33,12 @@ public:
 
   /// This is a convenience method that opens a file, gets its content and then
   /// closes the file. It returns MemoryBuffer and ObjectRef in one call to
-  /// avoid open the file twice. The IsText parameter is used to distinguish
-  /// whether the file should be opened as a binary or text file.
+  /// avoid open the file twice.
   LLVM_ABI llvm::Expected<
       std::pair<std::unique_ptr<llvm::MemoryBuffer>, cas::ObjectRef>>
   getBufferAndObjectRefForFile(const Twine &Name, int64_t FileSize = -1,
                                bool RequiresNullTerminator = true,
-                               bool IsVolatile = false, bool IsText = true);
+                               bool IsVolatile = false);
 
   /// Get ObjectRef of a file from its path.
   LLVM_ABI llvm::Expected<cas::ObjectRef>
