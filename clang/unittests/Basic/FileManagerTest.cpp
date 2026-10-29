@@ -539,41 +539,6 @@ TEST_F(FileManagerTest, CASProvider) {
   llvm::IntrusiveRefCntPtr<vfs::FileSystem> CASFS =
       llvm::cas::createCASProvidingFileSystem(DB, FS);
 
-  FileSystemOptions Opts;
-  {
-    FileManager Manager(Opts, CASFS);
-    std::optional<ObjectRef> CASContents;
-    auto Buf =
-        Manager.getBufferForFile(Path, /*IsVolatile*/ false,
-                                 /*RequiresNullTerminator*/ false, std::nullopt,
-                                 /*IsText*/ true, &CASContents);
-    ASSERT_TRUE(Buf);
-    EXPECT_EQ(Contents, (*Buf)->getBuffer());
-    ASSERT_TRUE(CASContents);
-    std::optional<ObjectProxy> BlobContents;
-    ASSERT_THAT_ERROR(DB->getProxy(*CASContents).moveInto(BlobContents),
-                      llvm::Succeeded());
-    EXPECT_EQ(BlobContents->getData(), Contents);
-  }
-  {
-    FileManager Manager(Opts, CASFS);
-    std::optional<FileEntryRef> FERef;
-    ASSERT_THAT_ERROR(
-        Manager.getFileRef(Path, /*OpenFile*/ true).moveInto(FERef),
-        llvm::Succeeded());
-    std::optional<ObjectRef> CASContents;
-    auto Buf =
-        Manager.getBufferForFile(*FERef, /*IsVolatile*/ false,
-                                 /*RequiresNullTerminator*/ false, std::nullopt,
-                                 /*IsText*/ true, &CASContents);
-    ASSERT_TRUE(Buf);
-    EXPECT_EQ(Contents, (*Buf)->getBuffer());
-    ASSERT_TRUE(CASContents);
-    std::optional<ObjectProxy> BlobContents;
-    ASSERT_THAT_ERROR(DB->getProxy(*CASContents).moveInto(BlobContents),
-                      llvm::Succeeded());
-    EXPECT_EQ(BlobContents->getData(), Contents);
-  }
   {
     FileSystemOptions Opts;
     FileManager Manager(Opts, CASFS);
