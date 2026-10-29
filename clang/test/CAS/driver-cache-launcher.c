@@ -47,6 +47,12 @@
 // OTHERCLANG: warning: caching disabled because clang-cache invokes a different clang binary than itself
 // OTHERCLANG-NEXT: run some compiler with opts -c [[SRC]] -o [[PREFIX]].o
 
+// A different compiler next to clang-cache is not clang either.
+// RUN: mkdir %t/bindir
+// RUN: ln -s %clang %t/bindir/clang-cache
+// RUN: cp %t/clang %t/bindir/gcc
+// RUN: env LLVM_CACHE_CAS_PATH=%t/cas %t/bindir/clang-cache %t/bindir/gcc -c %s -o %t.o 2>&1 | FileCheck %s -check-prefix=OTHERCLANG -DSRC=%s -DPREFIX=%t
+
 // RUN: %clang-cache %clang -x objective-c++ -fmodules -fmodules-cache-path=%t/mcp -fno-cxx-modules -c %s -o %t.o -### 2>&1 | FileCheck %s -check-prefix=NONMOD -DPREFIX=%t
 // RUN: %clang-cache %clang -x c++ -fmodules -fmodules-cache-path=%t/mcp -fno-cxx-modules -c %s -o %t.o -### 2>&1 | FileCheck %s -check-prefix=NONMOD -DPREFIX=%t
 // RUN: %clang-cache %clang -x objective-c -fmodules -fmodules-cache-path=%t/mcp -c %s -o %t.o -### 2>&1 | FileCheck %s -check-prefix=MOD -DPREFIX=%t

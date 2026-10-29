@@ -282,7 +282,8 @@ int clang_main(int Argc, char **Argv, const llvm::ToolContext &ToolContext) {
 
   const char *ProgName =
       ToolContext.NeedsPrependArg ? ToolContext.PrependArg : ToolContext.Path;
-  if (isClangCache(ToolChain::getTargetAndModeFromProgramName(ProgName).ModeSuffix)) {
+  if (isClangCache(
+          ToolChain::getTargetAndModeFromProgramName(ProgName).ModeSuffix)) {
     if (std::optional<int> ExitCode = handleClangCacheInvocation(Args, Saver))
       return *ExitCode;
     // handleClangCacheInvocation resets the ProgName.
@@ -360,7 +361,8 @@ int clang_main(int Argc, char **Argv, const llvm::ToolContext &ToolContext) {
   // constructor for `Driver` which uses this same value in `BuildCompilation`.
   // That path results in the wrong mode being selected. Explicitly adjust the
   // `Path` to point to the wrapped tool invocation.
-  if (isClangCache(ToolChain::getTargetAndModeFromProgramName(ToolContext.Path).ModeSuffix))
+  if (isClangCache(ToolChain::getTargetAndModeFromProgramName(ToolContext.Path)
+                       .ModeSuffix))
     Path = Args[0];
 
   // Whether the cc1 tool should be called inside the current process, or if we

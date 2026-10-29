@@ -30,16 +30,14 @@ using namespace clang;
 static bool isSameProgram(StringRef clangCachePath, StringRef compilerPath) {
   using namespace llvm::sys;
 
-  // Fast path check, see if they have the same parent path.
-  if (path::parent_path(clangCachePath) == path::parent_path(compilerPath))
-    return true;
-
 #if defined(_WIN32)
   // executables are normally copies on Windows, so we cannot do much more of a
   // check.
   return true;
 #else
-  // Check the file status IDs;
+  // Check the file status IDs. This also handles symlinks and hard links to
+  // the clang binary. Don't assume that a program next to clang-cache is
+  // clang; it could be another compiler, like gcc.
   fs::file_status CacheStat, CompilerStat;
   if (fs::status(clangCachePath, CacheStat))
     return false;
@@ -145,8 +143,8 @@ static void addLauncherArgs(SmallVectorImpl<const char *> &AllArgs,
                             llvm::StringSaver &Saver, bool IsCLMode,
                             bool IsCOFF) {
   // Split the args at the end of option (EOO) marker "--", if any.
-  auto InsertPoint =
-      llvm::find_if(AllArgs, [](const char *Elem) { return StringRef(Elem) == "--"; });
+  auto InsertPoint = llvm::find_if(
+      AllArgs, [](const char *Elem) { return StringRef(Elem) == "--"; });
   SmallVector<const char *, 128> ArgsBeforeEOO(AllArgs.begin(), InsertPoint);
   SmallVector<const char *, 128> ArgsAfterEOO(InsertPoint, AllArgs.end());
   auto AppendArgs = [&](ArrayRef<StringRef> Args) {
@@ -160,7 +158,8 @@ static void addLauncherArgs(SmallVectorImpl<const char *> &AllArgs,
         // to go through the driver. `clang-cl` takes non-CL options with a
         // `/clang:` prefix to namespace and maintain compatibility.
         if (IsCLMode && !Passthrough)
-          ArgsBeforeEOO.push_back(Saver.save(llvm::Twine("/clang:") + Arg).data());
+          ArgsBeforeEOO.push_back(
+              Saver.save(llvm::Twine("/clang:") + Arg).data());
         else
           ArgsBeforeEOO.push_back(Saver.save(Arg).data());
         Passthrough = false;
@@ -181,7 +180,7 @@ static void addLauncherArgs(SmallVectorImpl<const char *> &AllArgs,
 
   if (const char *PrefixMaps = ::getenv("LLVM_CACHE_PREFIX_MAPS")) {
     AppendArgs({"-fdepscan-prefix-map-sdk=/^sdk",
-        "-fdepscan-prefix-map-toolchain=/^toolchain"});
+                "-fdepscan-prefix-map-toolchain=/^toolchain"});
     StringRef PrefixMap, Remaining = PrefixMaps;
     while (true) {
       std::tie(PrefixMap, Remaining) = Remaining.split(';');
