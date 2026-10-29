@@ -137,8 +137,6 @@ std::optional<int> CompileJobCache::initialize(CompilerInstance &Clang) {
   if (!CAS || !Cache)
     return 1; // Exit with error!
 
-  CompilerInvocation DummyInvocation = Invocation;
-
   CompileJobCachingOptions CacheOpts;
   auto Keys = canonicalizeAndCreateCacheKeys(*CAS, *Cache, Diags, Invocation,
                                              CacheOpts);

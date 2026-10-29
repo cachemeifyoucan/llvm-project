@@ -17,50 +17,18 @@ class CompilerInstance;
 class CompilerInvocation;
 class DiagnosticsEngine;
 
-// Manage caching and replay of compile jobs.
-//
-// The high-level model is:
-//
-//  1. Extract options from the CompilerInvocation:
-//       - that can be simulated and
-//       - that don't affect the compile job's result.
-//  2. Canonicalize the options extracted in (1).
-//  3. Compute the result of the compile job using the canonicalized
-//     CompilerInvocation, with hooks installed to redirect outputs and
-//     enable live-streaming of a running compile job to stdout or stderr.
-//       - Compute a cache key.
-//       - Check the cache, and run the compile job if there's a cache miss.
-//       - Store the result of the compile job in the cache.
-//  4. Replay the compile job, using the options extracted in (1).
-//
-// An example (albeit not yet implemented) is handling options controlling
-// output of diagnostics. The CompilerInvocation can be canonicalized to
-// serialize the diagnostics to a virtual path (<output>.diag or something).
-//
-//   - On a cache miss, the compile job runs, and the diagnostics are
-//     serialized and stored in the cache per the canonicalized options
-//     from (2).
-//   - Either way, the diagnostics are replayed according to the options
-//     extracted from (1) during (4).
-//
-// The above will produce the correct output for diagnostics, but the experience
-// will be degraded in the common command-line case (emitting to stderr)
-// because the diagnostics will not be streamed live. This can be improved:
-//
-//   - Change (3) to accept a hook: a DiagnosticsConsumer that diagnostics
-//     are mirrored to (in addition to canonicalized options from (2)).
-//   - If diagnostics would be live-streamed, send in a diagnostics consumer
-//     that matches (1). Otherwise, send in an IgnoringDiagnosticsConsumer.
-//   - In step (4), only skip replaying the diagnostics if they were already
-//     handled.
+/// Manages caching and replay of compile jobs.
+///
+/// The cache key for a job is computed from its canonicalized
+/// \c CompilerInvocation; options that don't affect the result (such as
+/// output paths) are canonicalized away. On a cache hit the cached outputs
+/// and diagnostics are replayed. On a miss the outputs are written to disk
+/// as usual while also being captured, together with the emitted
+/// diagnostics, and the result is stored in the cache.
 class CompileJobCache {
 public:
   CompileJobCache();
   ~CompileJobCache();
-
-  using OutputKind = clang::cas::CompileJobCacheResult::OutputKind;
-
-  StringRef getPathForOutputKind(OutputKind Kind);
 
   /// Canonicalize \p Clang.
   ///

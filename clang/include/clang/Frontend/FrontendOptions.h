@@ -409,10 +409,6 @@ public:
   /// caching of compilation outputs. This is used for testing purposes.
   unsigned DisableCachedCompileJobReplay : 1;
 
-  /// Keep the diagnostic client open for receiving diagnostics after the source
-  /// files have been processed.
-  unsigned MayEmitDiagnosticsAfterProcessingSourceFiles : 1;
-
   /// Output (and read) PCM files regardless of compiler errors.
   LLVM_PREFERRED_TYPE(bool)
   unsigned AllowPCMWithCompilerErrors : 1;
@@ -611,7 +607,6 @@ public:
         ModulesEmbedAllFiles(false), IncludeTimestamps(true),
         UseTemporary(true), CacheCompileJob(false),
         DisableCachedCompileJobReplay(false),
-        MayEmitDiagnosticsAfterProcessingSourceFiles(false),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
         EmitSymbolGraph(false), EmitExtensionSymbolGraphs(false),
         EmitSymbolGraphSymbolLabelsForTesting(false),

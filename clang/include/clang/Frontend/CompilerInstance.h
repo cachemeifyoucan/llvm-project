@@ -25,7 +25,6 @@
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/CAS/CASID.h"
-#include "llvm/CAS/CASOutputBackend.h"
 #include "llvm/Support/BuryPointer.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LibraryOptionsContext.h"
