@@ -3040,6 +3040,8 @@ recursive_directory_iterator::increment(std::error_code &EC) {
   return *this;
 }
 
+const char File::ID = 0;
+
 const char FileSystem::ID = 0;
 const char OverlayFileSystem::ID = 0;
 const char ProxyFileSystem::ID = 0;

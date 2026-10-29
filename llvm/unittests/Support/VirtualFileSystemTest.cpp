@@ -233,6 +233,36 @@ std::string getPosixPath(const Twine &S) {
 }
 } // end anonymous namespace
 
+namespace {
+struct RTTIDummyFile : public RTTIExtends<RTTIDummyFile, DummyFile> {
+  static const char ID;
+  using RTTIExtends::RTTIExtends;
+};
+const char RTTIDummyFile::ID = 0;
+} // namespace
+
+TEST(VirtualFileSystemTest, FileRTTI) {
+  vfs::Status S("/a", llvm::sys::fs::UniqueID(1, 1), sys::TimePoint<>(), 0, 0,
+                0, sys::fs::file_type::regular_file, sys::fs::all_all);
+  std::unique_ptr<vfs::File> Derived = std::make_unique<RTTIDummyFile>(S);
+  std::unique_ptr<vfs::File> Base = std::make_unique<DummyFile>(S);
+
+  EXPECT_TRUE(isa<vfs::File>(Derived.get()));
+  EXPECT_TRUE(isa<RTTIDummyFile>(Derived.get()));
+  EXPECT_TRUE(isa<vfs::File>(Base.get()));
+  EXPECT_FALSE(isa<RTTIDummyFile>(Base.get()));
+  EXPECT_EQ(dyn_cast<RTTIDummyFile>(Derived.get()), Derived.get());
+  EXPECT_EQ(dyn_cast<RTTIDummyFile>(Base.get()), nullptr);
+
+  // Files opened from the builtin file systems are plain vfs::Files.
+  vfs::InMemoryFileSystem FS;
+  FS.addFile("/b", 0, MemoryBuffer::getMemBuffer("b"));
+  auto F = FS.openFileForRead("/b");
+  ASSERT_TRUE(F);
+  EXPECT_TRUE(isa<vfs::File>(F->get()));
+  EXPECT_FALSE(isa<RTTIDummyFile>(F->get()));
+}
+
 TEST(VirtualFileSystemTest, StatusQueries) {
   auto D = makeIntrusiveRefCnt<DummyFileSystem>();
   ErrorOr<vfs::Status> Status((std::error_code()));
