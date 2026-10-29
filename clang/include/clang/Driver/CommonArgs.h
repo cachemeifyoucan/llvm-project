@@ -300,7 +300,8 @@ const char *renderEscapedCommandLine(const ToolChain &TC,
 bool shouldRecordCommandLine(const ToolChain &TC,
                              const llvm::opt::ArgList &Args,
                              bool &FRecordCommandLine, bool &GRecordCommandLine,
-                             bool &DXRecordCommandLine);
+                             bool &DXRecordCommandLine,
+                             const bool GReproducible = false);
 
 void renderGlobalISelOptions(const Driver &D, const llvm::opt::ArgList &Args,
                              llvm::opt::ArgStringList &CmdArgs,

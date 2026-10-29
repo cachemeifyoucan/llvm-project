@@ -8522,6 +8522,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &Job,
 
   const char *Exec = D.getDriverProgramPath();
 
+  // Check if there's a request for reproducible debug info. Pass it through
+  // but also use it.
+  bool GReproducible = Args.hasFlag(options::OPT_greproducible,
+                                    options::OPT_gno_reproducible, false);
+  if (GReproducible)
+    CmdArgs.push_back("-greproducible");
+
   // Optionally embed the -cc1 level arguments into the debug info or a
   // section, for build analysis.
   // Also record command line arguments into the debug info if
@@ -8531,7 +8538,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &Job,
   auto FRecordSwitches = false;
   bool DXRecordSwitches = false;
   if (shouldRecordCommandLine(TC, Args, FRecordSwitches, GRecordSwitches,
-                              DXRecordSwitches)) {
+                              DXRecordSwitches, GReproducible)) {
     auto FlagsArgString = renderEscapedCommandLine(TC, Args);
     if (TC.UseDwarfDebugFlags() || GRecordSwitches) {
       CmdArgs.push_back("-dwarf-debug-flags");

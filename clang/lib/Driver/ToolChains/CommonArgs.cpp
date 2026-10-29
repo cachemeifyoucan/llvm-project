@@ -3199,7 +3199,8 @@ bool tools::shouldRecordCommandLine(const ToolChain &TC,
                                     const llvm::opt::ArgList &Args,
                                     bool &FRecordCommandLine,
                                     bool &GRecordCommandLine,
-                                    bool &DXRecordCommandLine) {
+                                    bool &DXRecordCommandLine,
+                                    const bool GReproducible) {
   const Driver &D = TC.getDriver();
   const llvm::Triple &Triple = TC.getEffectiveTriple();
   const std::string &TripleStr = Triple.getTriple();
@@ -3208,6 +3209,7 @@ bool tools::shouldRecordCommandLine(const ToolChain &TC,
       Args.hasFlag(options::OPT_frecord_command_line,
                    options::OPT_fno_record_command_line, false);
   GRecordCommandLine =
+      !GReproducible &&
       Args.hasFlag(options::OPT_grecord_command_line,
                    options::OPT_gno_record_command_line, false);
   DXRecordCommandLine = Triple.isDXIL() && Args.hasArg(options::OPT_g_Flag);

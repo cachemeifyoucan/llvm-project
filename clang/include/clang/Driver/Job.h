@@ -144,6 +144,7 @@ class Command {
 
   /// See Command::setEnvironment
   std::vector<const char *> Environment;
+  std::vector<const char *> EnvironmentDisplay;
 
   /// Optional redirection for stdin, stdout, stderr.
   std::vector<std::optional<std::string>> RedirectFiles;
@@ -235,6 +236,9 @@ public:
   void replaceArguments(llvm::opt::ArgStringList List) {
     Arguments = std::move(List);
   }
+
+  /// Sets the environment to display in `-###`.
+  virtual void setEnvironmentDisplay(llvm::ArrayRef<const char *> Display);
 
   void replaceExecutable(const char *Exe) { Executable = Exe; }
 
