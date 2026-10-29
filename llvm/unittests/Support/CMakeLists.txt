@@ -76,6 +76,7 @@ add_llvm_unittest(SupportTests
   Path.cpp
   PerThreadBumpPtrAllocatorTest.cpp
   PrefixMapperTest.cpp
+  PrefixMappingFileSystemTest.cpp
   ProcessTest.cpp
   ProgramTest.cpp
   ProgramStackTest.cpp
