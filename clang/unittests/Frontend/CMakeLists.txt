@@ -1,6 +1,7 @@
 add_clang_unittest(FrontendTests
   ASTUnitTest.cpp
   CASIncludeTreeTest.cpp
+  CompileJobCacheResultTest.cpp
   CompilerInvocationTest.cpp
   CompilerInstanceTest.cpp
   FixedPointString.cpp
