@@ -1,0 +1,28 @@
+## Check that cache-build-session runs the command with a fresh build session
+## identifier and propagates its exit code.
+
+# RUN: cache-build-session -v %python -c "import os; print(os.environ['LLVM_CACHE_BUILD_SESSION_ID'])" > %t.out 2> %t.err
+# RUN: FileCheck %s --check-prefix=SESSION < %t.out
+# RUN: FileCheck %s --check-prefix=SESSION-NOTE < %t.err
+# SESSION: {{^[0-9]+-[0-9]+$}}
+# SESSION-NOTE: note: setting LLVM_CACHE_BUILD_SESSION_ID={{[0-9]+-[0-9]+$}}
+
+# RUN: not cache-build-session %python -c "import sys; sys.exit(3)"
+
+# RUN: not cache-build-session 2>&1 | FileCheck %s --check-prefix=USAGE
+# USAGE: USAGE: cache-build-session
+
+# RUN: not cache-build-session this-program-does-not-exist 2>&1 | FileCheck %s --check-prefix=NOT-FOUND
+# NOT-FOUND: error: cannot find executable this-program-does-not-exist
+
+## Infer prefix maps from a CMake build directory, merging with any existing
+## LLVM_CACHE_PREFIX_MAPS.
+# RUN: rm -rf %t.dir && mkdir -p %t.dir
+# RUN: cp -R %S/Inputs/cmake-build %t.dir/cmake-build
+# RUN: cd %t.dir/cmake-build
+# RUN: env LLVM_CACHE_PREFIX_MAPS=/sdk=/^sdk cache-build-session -prefix-map-cmake %python -c "import os; print(os.environ['LLVM_CACHE_PREFIX_MAPS'])" | FileCheck %s --check-prefix=CMAKE
+# CMAKE: /sdk=/^sdk;/llvm/build=/^build;/llvm/llvm-project/llvm=/^src;/llvm/llvm-project/clang=/^src-clang;/llvm/llvm-project/clang-tools-extra=/^src-clang-tools-extra;/llvm/llvm-project/third-party/benchmark=/^src-benchmark;/llvm/llvm-project/other/benchmark=/^src-benchmark-1;/llvm/llvm-project/another/benchmark=/^src-benchmark-2{{$}}
+
+# RUN: cd %t.dir
+# RUN: not cache-build-session -prefix-map-cmake %python -c "" 2>&1 | FileCheck %s --check-prefix=CMAKE-ERR
+# CMAKE-ERR: error: could not infer prefix map for CMake build:

@@ -75,6 +75,7 @@ set(LLVM_TEST_DEPENDS_COMMON
 set(LLVM_TEST_DEPENDS
   ${LLVM_TEST_DEPENDS_COMMON}
   LLVMWindowsDriver
+  cache-build-session
   llc
   lli
   lli-child-target

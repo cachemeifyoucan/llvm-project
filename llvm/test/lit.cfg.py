@@ -248,6 +248,7 @@ tools = [
 # FIXME: Why do we have both `lli` and `%lli` that do slightly different things?
 tools.extend(
     [
+        "cache-build-session",
         "dsymutil",
         "lli",
         "lli-child-target",
