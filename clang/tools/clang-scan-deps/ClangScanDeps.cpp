@@ -620,6 +620,8 @@ public:
               if (I.DriverCommandLine.empty()) {
                 for (const auto &Cmd : I.Commands) {
                   JOS.object([&] {
+                    if (Cmd.TUCacheKey)
+                      JOS.attribute("cache-key", StringRef(*Cmd.TUCacheKey));
                     if (I.IncludeTreeID)
                       JOS.attribute("cas-include-tree-id",
                                     StringRef(*I.IncludeTreeID));

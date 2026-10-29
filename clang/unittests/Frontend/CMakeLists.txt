@@ -3,6 +3,7 @@ add_clang_unittest(FrontendTests
   CachedDiagnosticsTest.cpp
   CASDependencyCollectorTest.cpp
   CASIncludeTreeTest.cpp
+  CompileJobCacheKeyTest.cpp
   CompileJobCacheResultTest.cpp
   CompilerInvocationTest.cpp
   CompilerInstanceTest.cpp

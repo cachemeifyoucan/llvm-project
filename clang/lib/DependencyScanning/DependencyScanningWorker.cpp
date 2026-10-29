@@ -972,7 +972,7 @@ public:
       return false;
 
     Consumer.handleBuildCommand(
-        {CommandLine[0], ModuleInvocation.getCC1CommandLine()});
+        {CommandLine[0], ModuleInvocation.getCC1CommandLine(), std::nullopt});
 
     return true;
   }
@@ -1034,8 +1034,11 @@ public:
     std::string ID = ModuleInvocation.getFrontendOpts().CASIncludeTreeID;
     if (!ID.empty())
       Consumer.handleIncludeTreeID(std::move(ID));
-    Consumer.handleBuildCommand(
-        {Executable.str(), ModuleInvocation.getCC1CommandLine()});
+    std::optional<std::string> CacheKey =
+        Controller.getCacheKey(ModuleInvocation);
+    Consumer.handleBuildCommand({Executable.str(),
+                                 ModuleInvocation.getCC1CommandLine(),
+                                 std::move(CacheKey)});
     return true;
   }
 };
@@ -1102,7 +1105,7 @@ bool DependencyScanningWorker::computeDependencies(
     if (StringRef(Cmd[1]) != "-cc1") {
       // Non-clang command. Just pass through to the dependency consumer.
       DepConsumer.handleBuildCommand(
-          {Cmd.front(), {Cmd.begin() + 1, Cmd.end()}});
+          {Cmd.front(), {Cmd.begin() + 1, Cmd.end()}, std::nullopt});
       return true;
     }
 

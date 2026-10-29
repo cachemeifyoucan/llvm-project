@@ -49,6 +49,7 @@
 // FULL-NEXT:     {
 // FULL-NEXT:       "commands": [
 // FULL-NEXT:         {
+// FULL-NEXT:           "cache-key": "[[TU_CACHE_KEY:llvmcas://[[:xdigit:]]+]]"
 // FULL:                "clang-module-deps": []
 // FULL:                "command-line": [
 // FULL-NEXT:             "-cc1"

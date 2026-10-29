@@ -159,6 +159,9 @@ private:
 struct Command {
   std::string Executable;
   std::vector<std::string> Arguments;
+
+  /// The \c ActionCache key for this translation unit, if any.
+  std::optional<std::string> TUCacheKey;
 };
 
 /// Graph of modular dependencies.

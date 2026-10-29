@@ -8,6 +8,7 @@
 
 #include "clang/Basic/Diagnostic.h"
 #include "clang/CAS/IncludeTree.h"
+#include "clang/Frontend/CompileJobCacheKey.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "llvm/CAS/ObjectStore.h"
 #include "llvm/Support/CommandLine.h"
@@ -19,6 +20,12 @@ using namespace clang::cas;
 using namespace llvm;
 
 static ExitOnError ExitOnErr("clang-cas-test: ");
+
+static void printCompileJobCacheKey(llvm::cas::ObjectStore &CAS,
+                                    StringRef Key) {
+  auto KeyID = ExitOnErr(CAS.parseID(Key));
+  ExitOnErr(printCompileJobCacheKey(CAS, KeyID, outs()));
+}
 
 static void printIncludeTree(llvm::cas::ObjectStore &CAS, StringRef Key) {
   auto ID = ExitOnErr(CAS.parseID(Key));
@@ -32,12 +39,16 @@ int main(int Argc, const char **Argv) {
 
   enum ActionType {
     None,
+    PrintCompileJobCacheKey,
     PrintIncludeTree,
   };
 
   cl::opt<ActionType> Action(
       cl::desc("Action:"), cl::init(ActionType::None),
-      cl::values(clEnumValN(PrintIncludeTree, "print-include-tree",
+      cl::values(clEnumValN(PrintCompileJobCacheKey,
+                            "print-compile-job-cache-key",
+                            "Print a compile-job result cache key's structure"),
+                 clEnumValN(PrintIncludeTree, "print-include-tree",
                             "Print include tree structure")));
 
   cl::opt<std::string> CASPath("cas", cl::desc("On-disk CAS path"),
@@ -77,7 +88,14 @@ int main(int Argc, const char **Argv) {
   if (!CAS)
     return 1;
 
-  if (Action == ActionType::PrintIncludeTree) {
+  if (Action == ActionType::PrintCompileJobCacheKey) {
+    if (Inputs.empty()) {
+      errs() << "error: missing compile-job cache key in inputs'\n";
+      return 1;
+    }
+    for (StringRef CacheKey : Inputs)
+      printCompileJobCacheKey(*CAS, CacheKey);
+  } else if (Action == ActionType::PrintIncludeTree) {
     if (Inputs.empty()) {
       errs() << "error: missing include tree ID in inputs\n";
       return 1;

@@ -10,6 +10,7 @@
 #include "clang/CAS/IncludeTree.h"
 #include "clang/DependencyScanning/CachingActions.h"
 #include "clang/DependencyScanning/ScanAndUpdateArgs.h"
+#include "clang/Frontend/CompileJobCacheKey.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/CAS/ObjectStore.h"
@@ -38,6 +39,8 @@ private:
                   CompilerInvocation &NewInvocation) override;
   bool finalize(CompilerInstance &ScanInstance,
                 CowCompilerInvocation &NewInvocation) override;
+  std::optional<std::string>
+  getCacheKey(const CompilerInvocation &NewInvocation) override;
 
 private:
   IncludeTreeBuilder &current() {
@@ -52,6 +55,7 @@ private:
   // pointer so the builder cannot move when resizing.
   SmallVector<std::unique_ptr<IncludeTreeBuilder>> BuilderStack;
   std::optional<cas::IncludeTreeRoot> IncludeTreeResult;
+  llvm::StringMap<std::string> OutputToCacheKey;
 };
 
 /// Callbacks for building an include-tree for a given translation unit.
@@ -231,7 +235,24 @@ bool IncludeTreeActionController::finalize(
   }
 
   configureInvocationForCaching(NewInvocation, CASOpts, InputID);
+
+  auto &CAS = ScanInstance.getOrCreateObjectStore();
+  // FIXME: Make this return an error and propagate it up.
+  auto Key = createCompileJobCacheKey(CAS, ScanInstance.getDiagnostics(),
+                                      NewInvocation);
+  if (Key)
+    OutputToCacheKey[NewInvocation.getFrontendOpts().OutputFile] =
+        Key->toString();
   return true;
+}
+
+std::optional<std::string> IncludeTreeActionController::getCacheKey(
+    const CompilerInvocation &NewInvocation) {
+  auto It = OutputToCacheKey.find(NewInvocation.getFrontendOpts().OutputFile);
+  // FIXME: Assert this does not happen.
+  if (It == OutputToCacheKey.end())
+    return std::nullopt;
+  return It->second;
 }
 
 void IncludeTreeBuilder::enteredInclude(Preprocessor &PP, FileID FID) {

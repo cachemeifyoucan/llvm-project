@@ -24,5 +24,7 @@ def err_cas_filesystem_cannot_be_initialized : Error<
 def err_cas_depscan_failed: Error<
   "CAS-based dependency scan failed: %0">, DefaultFatal;
 def err_cas_store: Error<"failed to store to CAS: %0">, DefaultFatal;
+def err_cas_missing_root_id : Error<
+  "CAS missing expected root-id '%0'">, DefaultFatal;
 
 } // let Component = "CAS" in
