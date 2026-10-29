@@ -183,8 +183,9 @@ public:
 /// The PCH recorded file paths with canonical paths, create a VFS that
 /// allows remapping back to the non-canonical source paths so that they are
 /// found during dep-scanning.
-void dependencies::addReversePrefixMappingFileSystem(
-    const llvm::PrefixMapper &PrefixMapper, CompilerInstance &ScanInstance) {
+static void
+addReversePrefixMappingFileSystem(const llvm::PrefixMapper &PrefixMapper,
+                                  CompilerInstance &ScanInstance) {
   llvm::PrefixMapper ReverseMapper;
   ReverseMapper.addInverseRange(PrefixMapper.getMappings());
   ReverseMapper.sort();
