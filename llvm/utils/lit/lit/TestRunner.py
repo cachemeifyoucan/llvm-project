@@ -1392,6 +1392,7 @@ def getDefaultSubstitutions(test, tmpDir, tmpBase, normalize_slashes=False):
                 else pathlib.Path(tmpBase).anchor,
             ),
             ("%{fs-sep}", fs_sep),
+            ("%{fs-sep-yaml}", "\\\\\\\\\\\\\\\\" if kIsWindows else "/"),
         ]
     )
 
@@ -1437,6 +1438,20 @@ def getDefaultSubstitutions(test, tmpDir, tmpBase, normalize_slashes=False):
         # "%:[STpst]" are normalized paths without colons and without
         # a leading slash.
         substitutions.append(("%:" + letter, colonNormalizePath(path)))
+
+    substitutions.extend(
+        [
+            # $t (tmpName) in lower case for Windows
+            ("%{t-lower}", tmpName.lower() if kIsWindows else tmpName)
+        ]
+    )
+
+    substitutions.extend(
+        [
+            # The filesystem root for Windows for CAS prefix mapping.
+            ("%/root", os.environ.get('SystemDrive') + "/" if kIsWindows else "/"),
+        ]
+    )
 
     return substitutions
 

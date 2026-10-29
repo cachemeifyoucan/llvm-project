@@ -7,3 +7,13 @@
 # BASENAME: substitutions.py
 # STEM: substitutions
 # TMPBASENAME: [[FIRST:[^[:space:]]+]] [[FIRST]]
+
+# Path substitutions used by tests that need Windows-friendly paths.
+#
+# RUN: echo %{fs-sep-yaml} | FileCheck %s --check-prefix=FSSEPYAML
+# RUN: echo %{t-lower} %t | FileCheck %s --ignore-case --check-prefix=TLOWER
+# RUN: echo %/root | FileCheck %s --check-prefix=ROOT
+
+# FSSEPYAML: {{^(/|\\+)$}}
+# TLOWER: [[TMP:[^[:space:]]+]] [[TMP]]
+# ROOT: {{^([A-Za-z]:)?/$}}
