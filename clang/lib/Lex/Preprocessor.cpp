@@ -120,6 +120,7 @@ Preprocessor::Preprocessor(const PreprocessorOptions &PPOpts,
   PragmasEnabled = true;
   ParsingIfOrElifDirective = false;
   PreprocessedOutput = false;
+  IsSourceNonReproducible = false;
 
   // We haven't read anything from the external source.
   ReadMacrosFromExternalSource = false;

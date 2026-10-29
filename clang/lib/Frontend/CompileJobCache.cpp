@@ -12,6 +12,7 @@
 #include "clang/Frontend/CASDependencyCollector.h"
 #include "clang/Frontend/CompileJobCacheKey.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include "clang/Lex/PreprocessorOptions.h"
 #include "llvm/CAS/ActionCache.h"
 #include "llvm/CAS/CASOutputBackend.h"
 #include "llvm/Support/Path.h"
@@ -144,6 +145,15 @@ std::optional<int> CompileJobCache::initialize(CompilerInstance &Clang) {
   if (!Keys)
     return 1; // Exit with error!
   std::tie(ResultCacheKey, ResultCacheKeyWithInputCacheKeysResolved) = *Keys;
+
+  switch (FrontendOpts.ProgramAction) {
+  case frontend::GeneratePCH:
+    Clang.getPreprocessorOpts().CachingDiagOption = CachingDiagKind::Error;
+    break;
+  default:
+    Clang.getPreprocessorOpts().CachingDiagOption = CachingDiagKind::Warning;
+    break;
+  }
 
   DisableCachedCompileJobReplay = CacheOpts.DisableCachedCompileJobReplay;
 
@@ -328,7 +338,22 @@ bool CompileJobCache::finishComputedResult(CompilerInstance &Clang,
 
   DiagnosticsEngine &Diags = Clang.getDiagnostics();
 
-  bool SkipCache = false;
+  // Check if we encounter any source that would generate non-reproducible
+  // outputs.
+  bool SkipCache = Clang.hasPreprocessor() && Clang.isSourceNonReproducible();
+  if (SkipCache) {
+    switch (Clang.getPreprocessorOpts().CachingDiagOption) {
+    case CachingDiagKind::None:
+      break;
+    case CachingDiagKind::Warning:
+      Diags.Report(diag::remark_compile_job_cache_skipped)
+          << ResultCacheKey->toString();
+      break;
+    case CachingDiagKind::Error:
+      llvm_unreachable("Should not reach here if there is an error");
+    }
+  }
+
   if (Error E = CacheBackend->finishComputedResult(
           *ResultCacheKey, *ResultCacheKeyWithInputCacheKeysResolved,
           SkipCache)) {

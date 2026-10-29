@@ -1636,6 +1636,19 @@ void Preprocessor::ExpandBuiltinMacro(Token &Tok) {
   Tok.clearFlag(Token::NeedsCleaning);
   bool IsAtStartOfLine = Tok.isAtStartOfLine();
   bool HasLeadingSpace = Tok.hasLeadingSpace();
+  auto handleDateTimeWarnings = [&](SourceLocation Loc) {
+    IsSourceNonReproducible = true;
+    switch (getPreprocessorOpts().CachingDiagOption) {
+    case CachingDiagKind::None:
+      return;
+    case CachingDiagKind::Warning:
+      Diag(Loc, diag::warn_pp_encounter_nonreproducible);
+      return;
+    case CachingDiagKind::Error:
+      Diag(Loc, diag::err_pp_encounter_nonreproducible);
+      return;
+    }
+  };
 
   if (II == Ident__LINE__) {
     // C99 6.10.8: "__LINE__: The presumed line number (within the current
@@ -1694,6 +1707,7 @@ void Preprocessor::ExpandBuiltinMacro(Token &Tok) {
     Tok.setKind(tok::string_literal);
   } else if (II == Ident__DATE__) {
     Diag(Tok.getLocation(), diag::warn_pp_date_time);
+    handleDateTimeWarnings(Tok.getLocation());
 
     size_t TIMETokLen = 0, DATETokLen = 0;
     ComputeDATE_TIME(DATELoc, DATETokLen, TIMELoc, TIMETokLen, *this);
@@ -1705,6 +1719,7 @@ void Preprocessor::ExpandBuiltinMacro(Token &Tok) {
     return;
   } else if (II == Ident__TIME__) {
     Diag(Tok.getLocation(), diag::warn_pp_date_time);
+    handleDateTimeWarnings(Tok.getLocation());
 
     size_t TIMETokLen = 0, DATETokLen = 0;
     ComputeDATE_TIME(DATELoc, DATETokLen, TIMELoc, TIMETokLen, *this);
@@ -1731,6 +1746,7 @@ void Preprocessor::ExpandBuiltinMacro(Token &Tok) {
     Tok.setKind(tok::numeric_constant);
   } else if (II == Ident__TIMESTAMP__) {
     Diag(Tok.getLocation(), diag::warn_pp_date_time);
+    handleDateTimeWarnings(Tok.getLocation());
     // MSVC, ICC, GCC, VisualAge C++ extension.  The generated string should be
     // of the form "Ddd Mmm dd hh::mm::ss yyyy", which is returned by asctime.
     std::string Result = "1"; // DateTimeInitKind::LiteralOne by default.
