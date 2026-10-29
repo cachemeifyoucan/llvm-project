@@ -377,6 +377,7 @@ void PluginObjectStore::loadIfExistsAsync(
       case LLCAS_LOOKUP_RESULT_ERROR:
         return Ctx->CAS->Ctx->errorAndDispose(c_err);
       }
+      llvm_unreachable("unknown llcas_lookup_result_t value");
     };
 
     LoadObjCtx *Ctx = static_cast<LoadObjCtx *>(c_ctx);
@@ -634,6 +635,7 @@ void PluginActionCache::getImplAsync(
       case LLCAS_LOOKUP_RESULT_ERROR:
         return Ctx->CASCtx->errorAndDispose(c_err);
       }
+      llvm_unreachable("unknown llcas_lookup_result_t value");
     };
 
     CacheGetCtx *Ctx = static_cast<CacheGetCtx *>(c_ctx);
