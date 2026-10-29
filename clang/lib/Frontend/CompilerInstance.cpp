@@ -985,6 +985,10 @@ void CompilerInstance::initializeDelayedInputFileFromCAS() {
     return;
   }
   if (!Opts.CASInputFileCASID.empty()) {
+    auto reportError = [&](llvm::Error &&E) {
+      Diagnostics->Report(diag::err_fe_unable_to_load_cas_input)
+          << Opts.CASInputFileCASID << llvm::toString(std::move(E));
+    };
     auto ID = CAS.parseID(Opts.CASInputFileCASID);
     if (!ID)
       return reportError(ID.takeError());
