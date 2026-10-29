@@ -1149,11 +1149,14 @@ static bool HasExtension(const Preprocessor &PP, StringRef Extension) {
 
 /// EvaluateHasIncludeCommon - Process a '__has_include("path")'
 /// or '__has_include_next("path")' expression.
+/// If \p Precomputed is set it progresses the lexer but doesn't do a file
+/// lookup, it returns the value of \p Precomputed instead.
 /// Returns true if successful.
 static bool EvaluateHasIncludeCommon(Token &Tok, IdentifierInfo *II,
                                      Preprocessor &PP,
                                      ConstSearchDirIterator LookupFrom,
-                                     const FileEntry *LookupFromFile) {
+                                     const FileEntry *LookupFromFile,
+                                     std::optional<bool> Precomputed) {
   // Save the location of the current token.  If a '(' is later found, use
   // that location.  If not, use the end of this location instead.
   SourceLocation LParenLoc = Tok.getLocation();
@@ -1213,6 +1216,9 @@ static bool EvaluateHasIncludeCommon(Token &Tok, IdentifierInfo *II,
     PP.Diag(LParenLoc, diag::note_matching) << tok::l_paren;
     return false;
   }
+
+  if (Precomputed)
+    return *Precomputed;
 
   bool isAngled = PP.GetIncludeFilenameSpelling(Tok.getLocation(), Filename);
   // If GetIncludeFilenameSpelling set the start ptr to null, there was an
@@ -1338,15 +1344,27 @@ EmbedResult Preprocessor::EvaluateHasEmbed(Token &Tok, IdentifierInfo *II) {
 }
 
 bool Preprocessor::EvaluateHasInclude(Token &Tok, IdentifierInfo *II) {
-  return EvaluateHasIncludeCommon(Tok, II, *this, nullptr, nullptr);
+  std::optional<bool> Precomputed;
+  if (auto *CActions = getPPCachedActions()) {
+    Precomputed = CActions->evaluateHasInclude(*this, Tok.getLocation(),
+                                               /*IsIncludeNext*/ false);
+  }
+  return EvaluateHasIncludeCommon(Tok, II, *this, nullptr, nullptr,
+                                  Precomputed);
 }
 
 bool Preprocessor::EvaluateHasIncludeNext(Token &Tok, IdentifierInfo *II) {
+  std::optional<bool> Precomputed;
+  if (auto *CActions = getPPCachedActions()) {
+    Precomputed = CActions->evaluateHasInclude(*this, Tok.getLocation(),
+                                               /*IsIncludeNext*/ true);
+  }
   ConstSearchDirIterator Lookup = nullptr;
   const FileEntry *LookupFromFile;
   std::tie(Lookup, LookupFromFile) = getIncludeNextStart(Tok);
 
-  return EvaluateHasIncludeCommon(Tok, II, *this, Lookup, LookupFromFile);
+  return EvaluateHasIncludeCommon(Tok, II, *this, Lookup, LookupFromFile,
+                                  Precomputed);
 }
 
 /// Process single-argument builtin feature-like macros that return

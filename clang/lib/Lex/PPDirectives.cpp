@@ -2124,6 +2124,11 @@ bool Preprocessor::checkModuleIsAvailable(const LangOptions &LangOpts,
 
 std::pair<ConstSearchDirIterator, const FileEntry *>
 Preprocessor::getIncludeNextStart(const Token &IncludeNextTok) const {
+  if (getPPCachedActions()) {
+    // We have pre-recorded include lookups.
+    return std::make_pair(nullptr, nullptr);
+  }
+
   // #include_next is like #include, except that we start searching after
   // the current found directory.  If we can't do this, issue a
   // diagnostic.
@@ -2194,6 +2199,62 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
   // in C99 6.10.2p4.
   SourceLocation EndLoc =
       CheckEndOfDirective(IncludeTok.getIdentifierInfo()->getNameStart(), true);
+
+  if (auto *CActions = getPPCachedActions()) {
+    SourceLocation IncludePos = FilenameTok.getLocation();
+    // If the filename string was the result of macro expansions, set the
+    // include position on the file where it will be included and after the
+    // expansions.
+    if (IncludePos.isMacroID())
+      IncludePos = SourceMgr.getExpansionRange(IncludePos).getEnd();
+    auto Include = CActions->handleIncludeDirective(
+        *this, IncludePos, CurLexer->getSourceLocation());
+
+    auto InclusionCallback = [&](OptionalFileEntryRef FileRef,
+                                 const Module *SuggestedModule) {
+      if (!Callbacks || HashLoc.isInvalid())
+        return;
+
+      SmallString<128> FilenameBuffer;
+      StringRef Filename = getSpelling(FilenameTok, FilenameBuffer);
+      SourceLocation CharEnd = FilenameTok.getEndLoc();
+      CharSourceRange FilenameRange =
+          CharSourceRange::getCharRange(FilenameTok.getLocation(), CharEnd);
+      bool isAngled =
+          GetIncludeFilenameSpelling(FilenameTok.getLocation(), Filename);
+      SrcMgr::CharacteristicKind FileCharacter =
+          SourceMgr.getFileCharacteristic(FilenameTok.getLocation());
+      if (SuggestedModule)
+        Callbacks->InclusionDirective(
+            HashLoc, IncludeTok, Filename, isAngled, FilenameRange, FileRef,
+            /*SearchPath=*/"", /*RelativePath=*/"", SuggestedModule,
+            /*ModuleImported=*/true, FileCharacter);
+      else
+        Callbacks->InclusionDirective(
+            HashLoc, IncludeTok, Filename, isAngled, FilenameRange, FileRef,
+            /*SearchPath=*/"", /*RelativePath=*/"", /*SuggestedModule=*/nullptr,
+            /*ModuleImported=*/false, FileCharacter);
+    };
+
+    auto HandleIncludeFile = [&](const PPCachedActions::IncludeFile *File) {
+      OptionalFileEntryRef FE = SourceMgr.getFileEntryRefForID(File->FID);
+      bool IsImport =
+          IncludeTok.getIdentifierInfo()->getPPKeywordID() == tok::pp_import;
+      if (FE && IsImport) {
+        HeaderInfo.getFileInfo(*FE).isImport = true;
+      }
+      InclusionCallback(SourceMgr.getFileEntryRefForID(File->FID), nullptr);
+      EnterSourceFile(File->FID, nullptr, FilenameTok.getLocation(),
+                      /*IsFirstIncludeOfFile*/ true);
+    };
+
+    if (auto *File = std::get_if<PPCachedActions::IncludeFile>(&Include))
+      return HandleIncludeFile(File);
+    assert(std::holds_alternative<std::monostate>(Include));
+    // FIXME: Report \p Callbacks->FileSkipped? Note that it currently
+    // requires the resolved FileEntry for this particular #include.
+    return;
+  }
 
   auto Action = HandleHeaderIncludeOrImport(HashLoc, IncludeTok, FilenameTok,
                                             EndLoc, LookupFrom, LookupFromFile);

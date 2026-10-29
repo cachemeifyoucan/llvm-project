@@ -7,6 +7,7 @@ add_clang_unittest(LexTests
   ModuleDeclStateTest.cpp
   ModuleMapTest.cpp
   NoTrivialPPDirectiveTracerTest.cpp
+  PPCachedActionsTest.cpp
   PPCallbacksTest.cpp
   PPConditionalDirectiveRecordTest.cpp
   PPDependencyDirectivesTest.cpp
