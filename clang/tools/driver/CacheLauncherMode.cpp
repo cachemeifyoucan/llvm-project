@@ -174,7 +174,32 @@ static void addLauncherArgs(SmallVectorImpl<const char *> &AllArgs,
       }
     }
   };
-  AppendArgs({"-fdepscan"});
+  if (const char *DaemonPath =
+          ::getenv("CLANG_CACHE_SCAN_DAEMON_SOCKET_PATH")) {
+    // Instruct clang to connect to scanning daemon that is listening on the
+    // provided socket path. The caller is responsible for ensuring the daemon
+    // is compatible with the invoked clang.
+    AppendArgs({"-fdepscan=daemon"});
+    AppendArgs({(Twine("-fdepscan-daemon=") + DaemonPath).str()});
+  } else if (const char *SessionId = ::getenv("LLVM_CACHE_BUILD_SESSION_ID")) {
+    // `LLVM_CACHE_BUILD_SESSION_ID` enables sharing of a depscan daemon
+    // using the string it is set to. The clang invocations under the same
+    // `LLVM_CACHE_BUILD_SESSION_ID` will launch and re-use the same daemon.
+    //
+    // This is a scheme where we are still launching daemons on-demand,
+    // instead of a scheme where we start a daemon at the beginning of the
+    // "build session" for all clang invocations to connect to.
+    // Launcing daemons on-demand is preferable because it allows having mixed
+    // toolchains, with different clang versions, running under the same
+    // `LLVM_CACHE_BUILD_SESSION_ID`; in such a case there will be one daemon
+    // started and shared for each unique clang version.
+    AppendArgs({
+        "-fdepscan=daemon",
+        (Twine{"-fdepscan-share-identifier="} + SessionId).str(),
+    });
+  } else {
+    AppendArgs({"-fdepscan"});
+  }
 
   addCommonArgs(/*ForDriver*/ true, ArgsBeforeEOO, Saver);
 
@@ -200,6 +225,13 @@ static void addLauncherArgs(SmallVectorImpl<const char *> &AllArgs,
   AllArgs = ArgsBeforeEOO;
   std::copy(std::begin(ArgsAfterEOO), std::end(ArgsAfterEOO),
             std::back_inserter(AllArgs));
+}
+
+static void addScanServerArgs(const char *SocketPath,
+                              SmallVectorImpl<const char *> &Args,
+                              llvm::StringSaver &Saver) {
+  Args.append({"-cc1depscand", "-serve", SocketPath, "-cas-args"});
+  addCommonArgs(/*ForDriver*/ false, Args, Saver);
 }
 
 std::optional<int>
@@ -242,6 +274,20 @@ clang::handleClangCacheInvocation(SmallVectorImpl<const char *> &Args,
   const char *clangCachePath = Args.front();
   // Drop initial '/path/to/clang-cache' program name.
   Args.erase(Args.begin());
+
+  if (StringRef(Args.front()) == "-depscan-server") {
+    // Run "clang -cc1depscand -serve ..." after translating some of the
+    // environment variables that \p clang-cache understands.
+    if (Args.size() == 1) {
+      Diags.Report(diag::err_clang_cache_scanserve_missing_args);
+      return 1;
+    }
+    const char *SocketPath = Args[1];
+    Args.clear();
+    Args.push_back(clangCachePath);
+    addScanServerArgs(SocketPath, Args, Saver);
+    return std::nullopt;
+  }
 
   llvm::ErrorOr<std::string> compilerPathOrErr =
       llvm::sys::findProgramByName(Args.front());

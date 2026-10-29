@@ -110,6 +110,7 @@ tool_dirs = [config.clang_tools_dir, config.llvm_tools_dir]
 tools = [
     "apinotes-test",
     "c-index-test",
+    "cache-build-session",
     "clang-diff",
     "clang-format",
     "clang-repl",
