@@ -9,6 +9,7 @@
 #ifndef LLVM_CAS_CASFILESYSTEM_H
 #define LLVM_CAS_CASFILESYSTEM_H
 
+#include "llvm/CAS/CASReference.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ExtensibleRTTI.h"

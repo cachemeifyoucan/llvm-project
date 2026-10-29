@@ -21,8 +21,6 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/ADT/iterator_range.h"
-#include "llvm/CAS/CASFileSystem.h"
-#include "llvm/CAS/CASReference.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Chrono.h"
@@ -3049,10 +3047,6 @@ const char OverlayFileSystem::ID = 0;
 const char ProxyFileSystem::ID = 0;
 const char InMemoryFileSystem::ID = 0;
 const char RedirectingFileSystem::ID = 0;
-
-// FIXME: Temporarily put the CASBackedFile::ID in Support library to workaround
-// the layer issue that `dyn_cast` check for the type needs to happen here.
-const char cas::CASBackedFile::ID = 0;
 
 unsigned ::llvm::IntrusiveRefCntPtrInfo<FileSystem>::useCount(
     const FileSystem *FS) {
