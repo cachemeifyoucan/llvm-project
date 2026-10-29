@@ -26,6 +26,10 @@ namespace clang::cc1depscand {
 
 /// Configuration for sharing dependency scanning daemon instances.
 struct DepscanSharing {
+  bool OnlyShareParent = false;
+  bool ShareViaIdentifier = false;
+  std::optional<StringRef> Name;
+  std::optional<StringRef> Stop;
   std::optional<StringRef> Path;
   SmallVector<const char *> CASArgs;
 };

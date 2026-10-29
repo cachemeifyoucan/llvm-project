@@ -215,6 +215,12 @@ Expected<ScanDaemon> ScanDaemon::launchDaemon(StringRef BasePath,
   LaunchArgs.push_back("-cc1depscand");
   LaunchArgs.push_back("-run");
   LaunchArgs.push_back(BasePath);
+
+  if (Sharing.ShareViaIdentifier) {
+    // Invocations that share state via identifier will be isolated from
+    // unrelated daemons, so the daemon they share is safe to stay alive longer.
+    LaunchArgs.push_back("-long-running");
+  }
   LaunchArgs.push_back("-cas-args");
   for (const char *Arg : Sharing.CASArgs)
     LaunchArgs.push_back(Arg);

@@ -27,16 +27,19 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/CAS/ActionCache.h"
 #include "llvm/CAS/CASProvidingFileSystem.h"
 #include "llvm/CAS/ObjectStore.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/BLAKE3.h"
 #include "llvm/Support/Compiler.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/IOSandbox.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/ScopedDurationTimer.h"
@@ -58,6 +61,9 @@
 #ifdef _WIN32
 #include <io.h>
 #include <windows.h>
+
+// tlhelp32.h needs to be included after windows.h.
+#include <tlhelp32.h> // For process enumeration
 #endif
 
 using namespace clang;
@@ -88,6 +94,210 @@ private:
 };
 } // namespace
 
+namespace {
+/// Process ancestry information for daemon sharing.
+///
+/// Provides cross-platform access to process parent/child relationships:
+/// - Apple: Uses libproc API (proc_pidinfo)
+/// - Linux: Reads /proc/[pid]/stat and /proc/[pid]/comm
+/// - Windows: Uses CreateToolhelp32Snapshot for process enumeration
+///
+/// All three platforms provide PID, parent PID, and process name.
+///
+/// Note: This could potentially be moved to llvm/Support/Process.h as a
+/// cross-platform utility, but process ancestry is primarily used for
+/// daemon sharing heuristics and may not have broad applicability.
+struct ProcessAncestor {
+  uint64_t PID = ~0ULL;
+  uint64_t PPID = ~0ULL;
+  StringRef Name;
+};
+class ProcessAncestorIterator
+    : public llvm::iterator_facade_base<ProcessAncestorIterator,
+                                        std::forward_iterator_tag,
+                                        const ProcessAncestor> {
+
+public:
+  ProcessAncestorIterator() = default;
+
+  static uint64_t getThisPID();
+  static uint64_t getParentPID();
+
+  static ProcessAncestorIterator getThisBegin() {
+    return ProcessAncestorIterator().setPID(getThisPID());
+  }
+  static ProcessAncestorIterator getParentBegin() {
+    return ProcessAncestorIterator().setPID(getParentPID());
+  }
+
+  const ProcessAncestor &operator*() const { return Ancestor; }
+  ProcessAncestorIterator &operator++() { return setPID(Ancestor.PPID); }
+  bool operator==(const ProcessAncestorIterator &RHS) const {
+    return Ancestor.PID == RHS.Ancestor.PID;
+  }
+
+private:
+  ProcessAncestorIterator &setPID(uint64_t NewPID);
+
+  ProcessAncestor Ancestor;
+#ifdef USE_APPLE_LIBPROC_FOR_DEPSCAN_ANCESTORS
+  proc_bsdinfo ProcInfo;
+#endif
+};
+} // end namespace
+
+uint64_t ProcessAncestorIterator::getThisPID() {
+  return llvm::sys::Process::getProcessId();
+}
+
+uint64_t ProcessAncestorIterator::getParentPID() {
+#if defined(_WIN32)
+  DWORD CurrentPID = GetCurrentProcessId();
+  HANDLE Snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (Snapshot == INVALID_HANDLE_VALUE)
+    return ~0ULL;
+
+  // Use ANSI version explicitly to ensure char-based strings
+  PROCESSENTRY32 Entry;
+  Entry.dwSize = sizeof(PROCESSENTRY32);
+
+  bool Found = false;
+  DWORD ParentPID = 0;
+  if (Process32First(Snapshot, &Entry)) {
+    do {
+      if (Entry.th32ProcessID == CurrentPID) {
+        ParentPID = Entry.th32ParentProcessID;
+        Found = true;
+        break;
+      }
+    } while (Process32Next(Snapshot, &Entry));
+  }
+
+  CloseHandle(Snapshot);
+  return Found ? static_cast<uint64_t>(ParentPID) : ~0ULL;
+#else
+  return ::getppid();
+#endif
+}
+
+ProcessAncestorIterator &ProcessAncestorIterator::setPID(uint64_t NewPID) {
+  // Reset state in case NewPID isn't found.
+  Ancestor = ProcessAncestor();
+
+#if defined(USE_APPLE_LIBPROC_FOR_DEPSCAN_ANCESTORS)
+  // Apple: Use libproc API
+  pid_t TypeCorrectPID = NewPID;
+  if (proc_pidinfo(TypeCorrectPID, PROC_PIDTBSDINFO, 0, &ProcInfo,
+                   sizeof(ProcInfo)) != sizeof(ProcInfo))
+    return *this; // Not found or no access.
+
+  Ancestor.PID = NewPID;
+  Ancestor.PPID = ProcInfo.pbi_ppid;
+  Ancestor.Name = StringRef(ProcInfo.pbi_name);
+
+#elif defined(__linux__)
+  // Linux: Read from /proc filesystem
+  SmallString<64> StatPath;
+  llvm::raw_svector_ostream(StatPath) << "/proc/" << NewPID << "/stat";
+
+  auto StatBuf = llvm::MemoryBuffer::getFile(StatPath);
+  if (!StatBuf)
+    return *this; // Process not found or no access
+
+  // Parse the stat file: PID (name) state ppid ...
+  // The name can contain spaces and parentheses, so we need to find the last
+  // ')'
+  StringRef StatContent = StatBuf.get()->getBuffer();
+  size_t LastParen = StatContent.rfind(')');
+  if (LastParen == StringRef::npos)
+    return *this; // Invalid format
+
+  // Extract PPID (4th field after the closing parenthesis)
+  StringRef AfterName = StatContent.substr(LastParen + 1).ltrim();
+  SmallVector<StringRef, 8> Fields;
+  AfterName.split(Fields, ' ', /*MaxSplit=*/3);
+  if (Fields.size() < 3)
+    return *this; // Not enough fields
+
+  uint64_t PPID;
+  if (Fields[1].getAsInteger(10, PPID))
+    return *this; // Failed to parse PPID
+
+  // Read process name from /proc/[pid]/comm
+  SmallString<64> CommPath;
+  llvm::raw_svector_ostream(CommPath) << "/proc/" << NewPID << "/comm";
+
+  auto CommBuf = llvm::MemoryBuffer::getFile(CommPath);
+  StringRef ProcName;
+  if (CommBuf) {
+    ProcName = CommBuf.get()->getBuffer().trim();
+    // Store the name in a static container to ensure it persists
+    static llvm::StringMap<std::string> ProcessNames;
+    auto [It, Inserted] =
+        ProcessNames.try_emplace(ProcName.str(), ProcName.str());
+    ProcName = It->second;
+  }
+
+  Ancestor.PID = NewPID;
+  Ancestor.PPID = PPID;
+  Ancestor.Name = ProcName;
+
+#elif defined(_WIN32)
+  // Windows: Use CreateToolhelp32Snapshot to enumerate processes
+  HANDLE Snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (Snapshot == INVALID_HANDLE_VALUE)
+    return *this; // Cannot create snapshot
+
+  // Use Unicode version to properly handle international characters
+  PROCESSENTRY32W Entry;
+  Entry.dwSize = sizeof(PROCESSENTRY32W);
+
+  bool Found = false;
+  if (Process32FirstW(Snapshot, &Entry)) {
+    do {
+      if (Entry.th32ProcessID == static_cast<DWORD>(NewPID)) {
+        // Convert UTF-16 process name to UTF-8
+        std::string ExePathUTF8;
+        size_t ExeFileLen = wcslen(Entry.szExeFile);
+        ArrayRef<llvm::UTF16> ExeFileUTF16(
+            reinterpret_cast<const llvm::UTF16 *>(Entry.szExeFile), ExeFileLen);
+
+        if (!convertUTF16ToUTF8String(ExeFileUTF16, ExePathUTF8)) {
+          // If conversion fails, skip this process
+          CloseHandle(Snapshot);
+          return *this;
+        }
+
+        // Extract the executable name (without path)
+        StringRef ExePath(ExePathUTF8);
+        StringRef ExeName = llvm::sys::path::filename(ExePath);
+
+        // Store the name in a static container to ensure it persists
+        static llvm::StringMap<std::string> ProcessNames;
+        auto [It, Inserted] =
+            ProcessNames.try_emplace(ExeName.str(), ExeName.str());
+
+        Ancestor.PID = NewPID;
+        Ancestor.PPID = Entry.th32ParentProcessID;
+        Ancestor.Name = It->second;
+        Found = true;
+        break;
+      }
+    } while (Process32NextW(Snapshot, &Entry));
+  }
+
+  CloseHandle(Snapshot);
+  if (!Found)
+    return *this; // Process not found
+
+#else
+  // Other platforms: No process ancestry support
+  (void)NewPID;
+#endif
+
+  return *this;
+}
+
 static std::optional<std::string>
 makeDepscanDaemonKey(StringRef Mode, const DepscanSharing &Sharing) {
   auto completeKey = [&Sharing](llvm::BLAKE3 &Hasher) -> std::string {
@@ -108,11 +318,40 @@ makeDepscanDaemonKey(StringRef Mode, const DepscanSharing &Sharing) {
     Hasher.update(ArrayRef(reinterpret_cast<uint8_t *>(&PID), sizeof(PID)));
     return completeKey(Hasher);
   };
+  auto makeIdentifierKey = [&completeKey](StringRef Ident) -> std::string {
+    llvm::BLAKE3 Hasher;
+    Hasher.update(Ident);
+    return completeKey(Hasher);
+  };
+
+  if (Sharing.ShareViaIdentifier)
+    return makeIdentifierKey(*Sharing.Name);
+
+  if (Sharing.Name) {
+    // Check for fast path, which doesn't need to look up process names:
+    // -fdepscan-share-parent without -fdepscan-share-stop.
+    if (Sharing.Name->empty() && !Sharing.Stop)
+      return makePIDKey(ProcessAncestorIterator::getParentPID());
+
+    // Check the parent's process name, and then process ancestors.
+    for (ProcessAncestorIterator I = ProcessAncestorIterator::getParentBegin(),
+                                 IE;
+         I != IE; ++I) {
+      if (I->Name == Sharing.Stop)
+        break;
+      if (Sharing.Name->empty() || I->Name == *Sharing.Name)
+        return makePIDKey(I->PID);
+      if (Sharing.OnlyShareParent)
+        break;
+    }
+
+    // Fall through if the process to share isn't found.
+  }
 
   // Still daemonize, but use the PID from this process as the key to avoid
   // sharing state.
   if (Mode == "daemon")
-    return makePIDKey(llvm::sys::Process::getProcessId());
+    return makePIDKey(ProcessAncestorIterator::getThisPID());
 
   // Mode == "auto".
   //
@@ -313,7 +552,31 @@ static int scanAndUpdateCC1(const char *Exec, ArrayRef<const char *> OldArgs,
     WorkingDirectory = WorkingDirectoryBuf;
   }
 
+  // Collect these before returning to ensure they're claimed.
   DepscanSharing Sharing;
+  if (Arg *A = Args.getLastArg(options::OPT_fdepscan_share_stop_EQ))
+    Sharing.Stop = A->getValue();
+  if (Arg *A = Args.getLastArg(options::OPT_fdepscan_share_EQ,
+                               options::OPT_fdepscan_share_identifier,
+                               options::OPT_fdepscan_share_identifier_EQ,
+                               options::OPT_fdepscan_share_parent,
+                               options::OPT_fdepscan_share_parent_EQ,
+                               options::OPT_fno_depscan_share)) {
+    if (A->getOption().matches(options::OPT_fdepscan_share_EQ) ||
+        A->getOption().matches(options::OPT_fdepscan_share_parent_EQ)) {
+      Sharing.Name = A->getValue();
+      Sharing.OnlyShareParent =
+          A->getOption().matches(options::OPT_fdepscan_share_parent_EQ);
+    } else if (A->getOption().matches(options::OPT_fdepscan_share_parent)) {
+      Sharing.Name = "";
+      Sharing.OnlyShareParent = true;
+    } else if (A->getOption().matches(options::OPT_fdepscan_share_identifier) ||
+               A->getOption().matches(
+                   options::OPT_fdepscan_share_identifier_EQ)) {
+      Sharing.Name = A->getValue();
+      Sharing.ShareViaIdentifier = true;
+    }
+  }
   if (Arg *A = Args.getLastArg(options::OPT_fdepscan_daemon_EQ))
     Sharing.Path = A->getValue();
 

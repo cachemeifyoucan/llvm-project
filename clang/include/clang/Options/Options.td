@@ -9341,6 +9341,41 @@ def fdepscan : Flag<["-"], "fdepscan">,
 def fno_depscan : Flag<["-"], "fno-depscan">,
     Group<f_Group>,
     Alias<fdepscan_EQ>, AliasArgs<["off"]>;
+def fdepscan_share_EQ : Joined<["-"], "fdepscan-share=">,
+    Group<f_Group>,
+    HelpText<"If the argument is the name of a command in the process tree,"
+             " share state based on its PID."
+             " E.g., -fdepscan -fdepscan-share=ninja will search for 'ninja'"
+             " in the process tree and share state based on its PID if found."
+             " See also -fdepscan-share-stop.">;
+def fdepscan_share_parent_EQ : Joined<["-"], "fdepscan-share-parent=">,
+    Group<f_Group>,
+    HelpText<"Share state based on the PID of the parent command if the name"
+             " matches."
+             " See also -fdepscan-share-stop.">;
+def fdepscan_share_parent : Flag<["-"], "fdepscan-share-parent">,
+    Group<f_Group>,
+    HelpText<"Share state based on the PID of the parent command."
+             " See also -fdepscan-share-stop.">;
+def fno_depscan_share : Flag<["-"], "fno-depscan-share">,
+    Group<f_Group>,
+    HelpText<"Turn off -fdepscan-share and -fdepscan-share-parent.">;
+def fdepscan_share_stop_EQ : Joined<["-"], "fdepscan-share-stop=">,
+    Group<f_Group>,
+    HelpText<"Stop looking for the command named by -fdepscan-share if a"
+             " process with the name of the provided argument is found first."
+             " Also blocks -fdepscan-share=parent if the parent has this name."
+             " E.g., -fdepscan -fdepscan-share=ninja"
+             " -fdepscan-share-stop=cmake looks for 'ninja' and 'cmake' in the"
+             " process tree; if 'ninja' is found first, state is shared based"
+             " on ninja's PID; if 'cmake' is found first, state is not"
+             " shared.">;
+def fdepscan_share_identifier : Separate<["-"], "fdepscan-share-identifier">,
+    Group<f_Group>,
+    HelpText<"Share depscan daemon for Clang invocations using the same string "
+             "identifier.">;
+def fdepscan_share_identifier_EQ : Joined<["-"], "fdepscan-share-identifier=">,
+    Alias<fdepscan_share_identifier>;
 def fdepscan_daemon_EQ : Joined<["-"], "fdepscan-daemon=">, Group<f_Group>,
     HelpText<"Specify the path to the daemon to be used. Clang will use the"
              " daemon specified, rather than try to spawn its own based on"
