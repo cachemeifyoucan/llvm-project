@@ -93,3 +93,31 @@ TEST(CASProvidingFileSystemTest, WithCASSupportingFS) {
   // The file also ingested into the underlying FS.
   ASSERT_THAT_ERROR(UnderlyingDB->getProxy(ID).moveInto(Proxy), Succeeded());
 }
+
+TEST(CASProvidingFileSystemTest, ThroughRedirectingFileSystem) {
+  std::shared_ptr<ObjectStore> DB = createInMemoryCAS();
+  auto MemFS = makeIntrusiveRefCnt<vfs::InMemoryFileSystem>();
+  MemFS->addFile("/real/file", 0, MemoryBuffer::getMemBuffer("content"));
+  IntrusiveRefCntPtr<vfs::FileSystem> CASFS =
+      createCASProvidingFileSystem(DB, MemFS);
+
+  // A file read through a VFS overlay is still backed by the CAS.
+  auto FS = vfs::RedirectingFileSystem::create(
+      {{"/virtual/file", "/real/file"}}, /*UseExternalNames=*/false, CASFS);
+  auto F = FS->openFileForRead("/virtual/file");
+  ASSERT_TRUE(F);
+  auto *CASFile = dyn_cast<CASBackedFile>(F->get());
+  ASSERT_TRUE(CASFile);
+
+  std::optional<ObjectProxy> Expected;
+  ASSERT_THAT_ERROR(DB->createProxy({}, "content").moveInto(Expected),
+                    Succeeded());
+  EXPECT_EQ(CASFile->getObjectRefForContent(), Expected->getRef());
+
+  auto S = CASFile->status();
+  ASSERT_TRUE(S);
+  EXPECT_EQ(S->getName(), "/virtual/file");
+  auto Buf = CASFile->getBuffer("file");
+  ASSERT_TRUE(Buf);
+  EXPECT_EQ((*Buf)->getBuffer(), "content");
+}
