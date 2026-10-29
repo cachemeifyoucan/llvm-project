@@ -8,6 +8,7 @@
 
 #include "clang/DependencyScanning/DependencyScanningFilesystem.h"
 #include "clang/DependencyScanning/DependencyScanningService.h"
+#include "llvm/CAS/CASFileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Threading.h"
 #include <optional>
@@ -34,11 +35,15 @@ DependencyScanningWorkerFilesystem::readFile(StringRef Filename,
     return MaybeBuffer.getError();
   auto Buffer = std::move(*MaybeBuffer);
 
+  std::optional<cas::ObjectRef> CASContents;
+  if (auto *CASFile = dyn_cast<llvm::cas::CASBackedFile>(File.get()))
+    CASContents = CASFile->getObjectRefForContent();
+
   // If the file size changed between read and stat, pretend it didn't.
   if (Stat.getSize() != Buffer->getBufferSize())
     Stat = llvm::vfs::Status::copyWithNewSize(Stat, Buffer->getBufferSize());
 
-  return TentativeEntry(Stat, std::move(Buffer));
+  return TentativeEntry(Stat, std::move(Buffer), std::move(CASContents));
 }
 
 bool DependencyScanningWorkerFilesystem::ensureDirectiveTokensArePopulated(
@@ -255,8 +260,8 @@ const CachedFileSystemEntry *DependencyScanningWorkerFilesystem::createEntry(
   if (TEntry) {
     CachedFileContents *StoredContents = nullptr;
     if (TEntry->Contents)
-      StoredContents = new (ContentsStorage.Allocate())
-          CachedFileContents(std::move(TEntry->Contents));
+      StoredContents = new (ContentsStorage.Allocate()) CachedFileContents(
+          std::move(TEntry->Contents), std::move(TEntry->CASContents));
     return new (EntryStorage.Allocate())
         CachedFileSystemEntry(std::move(TEntry->Status), StoredContents);
   } else {
@@ -434,6 +439,33 @@ private:
   llvm::vfs::Status Stat;
 };
 
+class DepScanCASFile final : public llvm::cas::CASBackedFile {
+public:
+  DepScanCASFile(std::unique_ptr<llvm::MemoryBuffer> Buffer,
+                 cas::ObjectRef CASContents, llvm::vfs::Status Stat)
+      : Buffer(std::move(Buffer)), CASContents(CASContents),
+        Stat(std::move(Stat)) {}
+
+  static llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>> create(EntryRef Entry);
+
+  llvm::ErrorOr<llvm::vfs::Status> status() override { return Stat; }
+
+  llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>
+  getBuffer(const Twine &Name, int64_t FileSize, bool RequiresNullTerminator,
+            bool IsVolatile) override {
+    return std::move(Buffer);
+  }
+
+  cas::ObjectRef getObjectRefForContent() override { return CASContents; }
+
+  std::error_code close() override { return {}; }
+
+private:
+  std::unique_ptr<llvm::MemoryBuffer> Buffer;
+  cas::ObjectRef CASContents;
+  llvm::vfs::Status Stat;
+};
+
 } // end anonymous namespace
 
 llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>>
@@ -443,14 +475,21 @@ DepScanFile::create(EntryRef Entry) {
   if (Entry.isDirectory())
     return std::make_error_code(std::errc::is_a_directory);
 
-  auto Result = std::make_unique<DepScanFile>(
-      llvm::MemoryBuffer::getMemBuffer(Entry.getContents(),
-                                       Entry.getStatus().getName(),
-                                       /*RequiresNullTerminator=*/false),
-      Entry.getStatus());
+  std::unique_ptr<llvm::vfs::File> Result;
+  if (Entry.getObjectRefForContent())
+    Result = std::make_unique<DepScanCASFile>(
+        llvm::MemoryBuffer::getMemBuffer(Entry.getContents(),
+                                         Entry.getStatus().getName(),
+                                         /*RequiresNullTerminator=*/false),
+        *Entry.getObjectRefForContent(), Entry.getStatus());
+  else
+    Result = std::make_unique<DepScanFile>(
+        llvm::MemoryBuffer::getMemBuffer(Entry.getContents(),
+                                         Entry.getStatus().getName(),
+                                         /*RequiresNullTerminator=*/false),
+        Entry.getStatus());
 
-  return llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>>(
-      std::unique_ptr<llvm::vfs::File>(std::move(Result)));
+  return Result;
 }
 
 llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>>

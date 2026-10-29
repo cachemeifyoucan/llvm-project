@@ -85,6 +85,7 @@ add_clang_unittest(ToolingTests
 
   LLVM_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
+  CAS
   MC
   Option
   FrontendOpenMP

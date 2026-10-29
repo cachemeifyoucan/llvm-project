@@ -273,21 +273,32 @@ public:
   getBufferForFile(FileEntryRef Entry, bool isVolatile = false,
                    bool RequiresNullTerminator = true,
                    std::optional<int64_t> MaybeLimit = std::nullopt,
-                   bool IsText = true);
+                   bool IsText = true,
+                   std::optional<cas::ObjectRef> *CASContents = nullptr);
   llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>
   getBufferForFile(StringRef Filename, bool isVolatile = false,
                    bool RequiresNullTerminator = true,
                    std::optional<int64_t> MaybeLimit = std::nullopt,
-                   bool IsText = true) const {
+                   bool IsText = true,
+                   std::optional<cas::ObjectRef> *CASContents = nullptr) const {
     return getBufferForFileImpl(Filename,
                                 /*FileSize=*/MaybeLimit.value_or(-1),
-                                isVolatile, RequiresNullTerminator, IsText);
+                                isVolatile, RequiresNullTerminator, IsText,
+                                CASContents);
   }
+
+  /// This is a convenience method that opens a file, gets the \p cas::ObjectRef
+  /// for its contents if supported by the file system, and then closes the
+  /// file. If both the buffer and its `cas::ObjectRef` are needed use \p
+  /// getBufferForFile to avoid the extra file lookup.
+  llvm::ErrorOr<cas::ObjectRef>
+  getObjectRefForFileContent(const Twine &Filename);
 
 private:
   llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>
   getBufferForFileImpl(StringRef Filename, int64_t FileSize, bool isVolatile,
-                       bool RequiresNullTerminator, bool IsText) const;
+                       bool RequiresNullTerminator, bool IsText,
+                       std::optional<cas::ObjectRef> *CASContents) const;
 
   DirectoryEntry *&getRealDirEntry(const llvm::vfs::Status &Status);
 

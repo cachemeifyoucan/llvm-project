@@ -3,6 +3,7 @@ set(LLVM_LINK_COMPONENTS
   Option
   Support
   TargetParser
+  CAS
   )
 
 add_clang_library(clangDependencyScanning
