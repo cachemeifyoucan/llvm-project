@@ -71,8 +71,7 @@ public:
   public:
     Builder();
     ~Builder();
-    /// Treat outputs added for \p Path as having the given \p Kind. Otherwise
-    /// they will have kind \c Unknown.
+    /// Treat outputs added for \p Path as having the given \p Kind.
     void addKindMap(OutputKind Kind, StringRef Path);
     /// Add an output with an explicit \p Kind.
     void addOutput(OutputKind Kind, ObjectRef Object);
@@ -90,9 +89,7 @@ public:
 
 private:
   ObjectRef getOutputObject(size_t I) const;
-  ObjectRef getPathsListRef() const;
   OutputKind getOutputKind(size_t I) const;
-  Expected<ObjectRef> getOutputPath(size_t I) const;
 
 private:
   friend class CompileJobResultSchema;
