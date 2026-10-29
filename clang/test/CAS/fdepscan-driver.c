@@ -22,8 +22,10 @@
 // RUN:   -x c %s -### 2>&1 |                                   \
 // RUN:   FileCheck %s --check-prefix=CHECK-CMD
 
-// CHECK-CMD: "-cc1depscan" "-fdepscan=daemon" "-o"
-// CHECK-CMD: "-cc1" "@
+// Both jobs re-invoke clang the same way, including the extra argument of
+// an llvm-driver build.
+// CHECK-CMD: [[CLANG:".*"]] "-cc1depscan" "-fdepscan=daemon" "-o"
+// CHECK-CMD: [[CLANG]] "-cc1" "@
 
 // RUN: %clang -target x86_64-apple-macos11 -fdepscan=daemon -c \
 // RUN:   -x c %s -save-temps -###

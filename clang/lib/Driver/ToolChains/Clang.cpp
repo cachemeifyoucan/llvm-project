@@ -5472,11 +5472,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &Job,
       // Invoke the CC1 directly in this process
       C.addCommand(std::make_unique<CC1Command>(
           Job, *this, ResponseFileSupport::AtFileUTF8(), Exec, CmdArgs, Inputs,
-          Output));
+          Output, D.getPrependArg()));
     } else {
-      C.addCommand(std::make_unique<Command>(Job, *this,
-                                             ResponseFileSupport::AtFileUTF8(),
-                                             Exec, CmdArgs, Inputs, Output));
+      C.addCommand(std::make_unique<Command>(
+          Job, *this, ResponseFileSupport::AtFileUTF8(), Exec, CmdArgs, Inputs,
+          Output, D.getPrependArg()));
     }
     return;
   }
