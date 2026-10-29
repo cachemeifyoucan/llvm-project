@@ -401,8 +401,8 @@ public:
   LLVM_PREFERRED_TYPE(bool)
   unsigned IsSystemModule : 1;
 
-  /// Cache -cc1 compilations when possible. Ignored unless CASFileSystemRootID
-  /// is specified.
+  /// Cache -cc1 compilations when possible. Requires an include-tree input
+  /// (\c CASIncludeTreeID).
   unsigned CacheCompileJob : 1;
 
   /// Avoid checking if the compile job is already cached, force compilation and

@@ -9327,7 +9327,7 @@ def fdepscan_EQ : Joined<["-"], "fdepscan=">,
     Group<f_Group>,
     Visibility<[ClangOption, CLOption]>,
     HelpText<"Scan for dependencies ahead of compiling, generating a"
-             " pruned CAS tree to send to -fcas-fs. Values are"
+             " CAS include-tree to compile from. Values are"
              " 'auto',"
              " 'daemon' (see -fdepscan-share and -fdepscan-share-parent),"
              " 'inline', or"
@@ -9342,10 +9342,8 @@ def dump_depscan_tree_EQ : Option<["-"], "dump-depscan-tree=", KIND_JOINED>,
     HelpText<"emit the CAS identifier for the tree instead of the full -cc1">;
 
 // -cc1 options. These should be available in the driver too, but the driver
-// doesn't currently support most of them. For example, the driver should
-// read only from -fcas-fs if specified, in which case the -fdepscan
-// should scan to prune the CAS filesystem. Also, -fdepscan shouldn't
-// override -fcas / etc., it should just add those if not already specified.
+// doesn't currently support most of them. Also, -fdepscan shouldn't override
+// -fcas / etc., it should just add those if not already specified.
 let Visibility = [CC1Option] in {
 
 // FIXME: Add to driver once it's supported by (not clobbered by) -fdepscan.
@@ -9377,8 +9375,8 @@ def fcas_include_tree : Separate<["-"], "fcas-include-tree">,
 // FIXME: Add to driver under -fexperimental-cache=compile-job.
 defm cache_compile_job : BoolFOption<"cache-compile-job",
     FrontendOpts<"CacheCompileJob">, DefaultFalse,
-    PosFlag<SetTrue, [], [ClangOption], "Try to cache full compilation job (-cc1). Ignored"
-                         " (for now) without -fcas-fs.">,
+    PosFlag<SetTrue, [], [ClangOption], "Try to cache full compilation job (-cc1)."
+                         " Requires an include-tree input (-fcas-include-tree).">,
     NegFlag<SetFalse>>;
 
 defm cache_disable_replay : BoolFOption<"cache-disable-replay",

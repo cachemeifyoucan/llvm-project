@@ -29,8 +29,6 @@ def err_cas_missing_root_id : Error<
 
 def err_caching_backend_fail: Error<
   "caching backend error: %0">, DefaultFatal;
-def err_caching_output_non_deterministic: Error<
-  "caching failed because the output can be non-deterministic">;
 
 def remark_compile_job_cache_hit : Remark<
   "compile job cache hit for '%0' => '%1'">, InGroup<CompileJobCacheHit>;
