@@ -771,6 +771,17 @@ static void GenerateArg(ArgumentConsumer Consumer,
   denormalizeString(Consumer, Opt.getPrefixedName(), Opt.getKind(), 0, Value);
 }
 
+static void GenerateMultiArg(ArgumentConsumer Consumer,
+                             llvm::opt::OptSpecifier OptSpecifier,
+                             ArrayRef<StringRef> Values) {
+  Option Opt = getDriverOptTable().getOption(OptSpecifier);
+  assert(Opt.getKind() == Option::MultiArgClass);
+  assert(Opt.getNumArgs() == Values.size());
+  Consumer(Opt.getPrefix() + Opt.getName());
+  for (StringRef Value : Values)
+    Consumer(Value);
+}
+
 // Parse command line arguments into CompilerInvocation.
 using ParseFn =
     llvm::function_ref<bool(CompilerInvocation &, ArrayRef<const char *>,
@@ -3108,6 +3119,9 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
   for (const auto &ModuleFile : Opts.ModuleFiles)
     GenerateArg(Consumer, OPT_fmodule_file, ModuleFile);
 
+  for (const auto &A : Opts.PathPrefixMappings)
+    GenerateMultiArg(Consumer, OPT_fdepscan_prefix_map, {A.first, A.second});
+
   if (Opts.AuxTargetCPU)
     GenerateArg(Consumer, OPT_aux_target_cpu, *Opts.AuxTargetCPU);
 
@@ -3326,6 +3340,13 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     StringRef Val = A->getValue();
     if (!Val.contains('='))
       Opts.ModuleFiles.push_back(std::string(Val));
+  }
+
+  // Handle path prefix mappings
+  for (const Arg *A : Args.filtered(OPT_fdepscan_prefix_map)) {
+    ArrayRef<const char *> Values = A->getValues();
+    assert(Values.size() == 2);
+    Opts.PathPrefixMappings.emplace_back(Values[0], Values[1]);
   }
 
   if (Opts.ProgramAction != frontend::GenerateModule && Opts.IsSystemModule)

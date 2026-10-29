@@ -1234,6 +1234,24 @@ TEST_F(CommandLineTest, CASOptionsCopyOnWrite) {
   EXPECT_EQ(B.getCASOpts().CASPath, "other/cas");
 }
 
+TEST_F(CommandLineTest, PathPrefixMappingsRoundTrip) {
+  const char *Args[] = {"-fdepscan-prefix-map", "/a",   "/^a",
+                        "-fdepscan-prefix-map", "/b/c", "/^bc"};
+
+  ASSERT_TRUE(CompilerInvocation::CreateFromArgs(Invocation, Args, *Diags));
+  std::vector<std::pair<std::string, std::string>> Expected = {
+      {"/a", "/^a"}, {"/b/c", "/^bc"}};
+  EXPECT_EQ(Invocation.getFrontendOpts().PathPrefixMappings, Expected);
+
+  Invocation.generateCC1CommandLine(GeneratedArgs, *this);
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("-fdepscan-prefix-map"), 2));
+
+  CompilerInvocation Invocation2;
+  ASSERT_TRUE(
+      CompilerInvocation::CreateFromArgs(Invocation2, GeneratedArgs, *Diags));
+  EXPECT_EQ(Invocation2.getFrontendOpts().PathPrefixMappings, Expected);
+}
+
 TEST_F(CommandLineTest, WarningSuppressionMappings) {
   const char *Args[] = {"--warning-suppression-mappings=foo.txt"};
 

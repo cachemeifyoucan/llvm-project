@@ -9333,6 +9333,30 @@ def fdepscan_EQ : Joined<["-"], "fdepscan=">,
              " 'inline', or"
              " 'off' (default).">;
 
+// CAS prefix map options.
+//
+// FIXME: Add DepscanOption flag.
+def fdepscan_prefix_map_EQ : Joined<["-"], "fdepscan-prefix-map=">,
+    Group<f_Group>, Visibility<[ClangOption]>,
+    MetaVarName<"<old>=<new>">,
+    HelpText<"With -fdepscan, seamlessly filter the CAS filesystem to"
+             " apply the given prefix, updating the command-line to match.">;
+def fdepscan_prefix_map : MultiArg<["-"], "fdepscan-prefix-map", 2>,
+    Group<f_Group>, Visibility<[ClangOption, CC1Option]>,
+    MetaVarName<"<old> <new>">,
+    HelpText<"With -fdepscan, seamlessly filter the CAS filesystem to"
+             " apply the given prefix, updating the command-line to match.">;
+def fdepscan_prefix_map_sdk_EQ :
+    Joined<["-"], "fdepscan-prefix-map-sdk=">,
+    Group<f_Group>, MetaVarName<"<new>">,
+    HelpText<"With -fdepscan, auto-detect the SDK path on-disk and remap"
+             " it to the given path (see -fdepscan-prefix-map=).">;
+def fdepscan_prefix_map_toolchain_EQ :
+    Joined<["-"], "fdepscan-prefix-map-toolchain=">,
+    Group<f_Group>, MetaVarName<"<new>">,
+    HelpText<"With -fdepscan, auto-detect the toolchain path on-disk and"
+             " remap it to the given path (see -fdepscan-prefix-map=).">;
+
 // -cc1depscan options.
 //
 // FIXME: Add to their own group; add NoDriverOption and DepscanOption flags.
