@@ -395,6 +395,14 @@ LLVM_ABI bool isOnDiskCASEnabled();
 LLVM_ABI Expected<std::unique_ptr<ObjectStore>>
 createOnDiskCAS(const Twine &Path);
 
+/// Set \p Path to a reasonable default on-disk path for a persistent CAS for
+/// the current user.
+LLVM_ABI Error getDefaultOnDiskCASPath(SmallVectorImpl<char> &Path);
+
+/// Get a reasonable default on-disk path for a persistent CAS for the current
+/// user.
+LLVM_ABI llvm::Expected<std::string> getDefaultOnDiskCASPath();
+
 /// Create \c ObjectStore and \c ActionCache instances backed by a plugin that
 /// implements the C API in \c "llvm-c/CAS/PluginAPI_functions.h".
 ///
