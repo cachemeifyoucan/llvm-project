@@ -87,7 +87,7 @@ static void LLVMErrorHandler(void *UserData, const char *Message,
 
 #ifdef CLANG_HAVE_RLIMITS
 /// Attempt to ensure that we have at least 8MiB of usable stack space.
-static void ensureSufficientStack() {
+void ensureSufficientStack() {
   struct rlimit rlim;
   if (getrlimit(RLIMIT_STACK, &rlim) != 0)
     return;
@@ -111,7 +111,7 @@ static void ensureSufficientStack() {
   }
 }
 #else
-static void ensureSufficientStack() {}
+void ensureSufficientStack() {}
 #endif
 
 /// Print supported cpus of the given target.
