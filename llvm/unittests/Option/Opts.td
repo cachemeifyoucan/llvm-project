@@ -84,3 +84,6 @@ def marshalled_flag_b : Flag<["-"], "marshalled-flag-b">,
 def marshalled_flag_a : Flag<["-"], "marshalled-flag-a">,
   MarshallingInfoFlag<XOpts<"MarshalledFlagA">>,
   ImpliedByAnyOf<[marshalled_flag_c.KeyPath, marshalled_flag_b.KeyPath]>;
+
+def marshalled_string_pair_vector : Separate<["-"], "marshalled-string-pair-vector">,
+  MarshallingInfoStringPairVector<XOpts<"MarshalledStringPairVector">>;

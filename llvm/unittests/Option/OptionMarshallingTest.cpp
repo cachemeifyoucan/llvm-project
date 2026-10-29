@@ -22,6 +22,9 @@ struct OptionWithMarshallingInfo {
   const char *KeyPath;
   const char *ImpliedCheck;
   const char *ImpliedValue;
+  const char *DefaultValue;
+  const char *Normalizer;
+  const char *Denormalizer;
 };
 
 static const OptionWithMarshallingInfo MarshallingTable[] = {
@@ -30,7 +33,8 @@ static const OptionWithMarshallingInfo MarshallingTable[] = {
     FLAGS, VISIBILITY, PARAM, HELPTEXT, HELPTEXTSFORVARIANTS, METAVAR, VALUES, \
     SUBCOMMANDIDS_OFFSET, SHOULD_PARSE, ALWAYS_EMIT, KEYPATH, DEFAULT_VALUE,   \
     IMPLIED_CHECK, IMPLIED_VALUE, NORMALIZER, DENORMALIZER, TABLE_INDEX)       \
-  {OPT_##ID, #KEYPATH, #IMPLIED_CHECK, #IMPLIED_VALUE},
+  {OPT_##ID,       #KEYPATH,    #IMPLIED_CHECK, #IMPLIED_VALUE,                \
+   #DEFAULT_VALUE, #NORMALIZER, #DENORMALIZER},
 #include "Opts.inc"
 #undef OPTION_WITH_MARSHALLING
 };
@@ -61,4 +65,12 @@ TEST(OptionMarshalling, ImpliedCheckContainsDisjunctionOfKeypaths) {
   ASSERT_STREQ(MarshallingTable[3].ImpliedCheck,
                "false || X->MarshalledFlagC || X->MarshalledFlagB");
   ASSERT_STREQ(MarshallingTable[3].ImpliedValue, "true");
+}
+
+TEST(OptionMarshalling, StringPairVector) {
+  ASSERT_EQ(MarshallingTable[4].Opt, OPT_marshalled_string_pair_vector);
+  ASSERT_STREQ(MarshallingTable[4].KeyPath, "X->MarshalledStringPairVector");
+  ASSERT_STREQ(MarshallingTable[4].DefaultValue, "std::vector<StringPair>({})");
+  ASSERT_STREQ(MarshallingTable[4].Normalizer, "normalizeStringPairVector");
+  ASSERT_STREQ(MarshallingTable[4].Denormalizer, "denormalizeStringPairVector");
 }
