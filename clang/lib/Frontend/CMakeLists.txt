@@ -16,6 +16,7 @@ add_clang_library(clangFrontend
   ASTMerge.cpp
   ASTUnit.cpp
   CachedDiagnostics.cpp
+  CASDependencyCollector.cpp
   ChainedDiagnosticConsumer.cpp
   ChainedIncludesSource.cpp
   CompileJobCacheResult.cpp
