@@ -168,11 +168,11 @@ static void canonicalizeForCaching(const llvm::cas::ObjectStore &CAS,
                                    FrontendOptions &FrontendOpts,
                                    CASOptions &CASOpts) {
   // Canonicalize settings for caching, extracting settings that affect the
-  // compilation even if will clear them during the main compilation.
+  // compilation even if they will be cleared during the main compilation.
   FrontendOpts.IncludeTimestamps = false;
 
   // Hide the CAS configuration, canonicalizing it to keep the path to the
-  // CAS from leaking to the compile job, where it might affecting its
+  // CAS from leaking to the compile job, where it might affect its
   // output (e.g., in a diagnostic).
   //
   // TODO: Extract CASOptions.Path first if we need it later since it'll
