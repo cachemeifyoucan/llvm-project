@@ -126,7 +126,7 @@ std::unique_ptr<ASTUnit> clang::CreateASTUnitFromCommandLine(
   AST->Diagnostics = Diags;
   AST->FileSystemOpts = CI->getFileSystemOpts();
   AST->CodeGenOpts = std::make_unique<CodeGenOptions>(CI->getCodeGenOpts());
-  VFS = createVFSFromCompilerInvocation(*CI, *Diags, VFS, /*CAS=*/nullptr);
+  VFS = createVFSFromCompilerInvocation(*CI, *Diags, VFS);
   AST->FileMgr =
       llvm::makeIntrusiveRefCnt<FileManager>(AST->FileSystemOpts, VFS);
   AST->StorePreamblesInMemory = StorePreamblesInMemory;
