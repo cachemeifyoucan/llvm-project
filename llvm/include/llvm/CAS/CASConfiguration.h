@@ -60,7 +60,7 @@ public:
   /// Get resolved CASPath.
   LLVM_ABI Error getResolvedCASPath(llvm::SmallVectorImpl<char> &Result) const;
 
-  operator bool() { return !CASPath.empty() || !PluginPath.empty(); }
+  operator bool() const { return !CASPath.empty() || !PluginPath.empty(); }
 };
 
 } // namespace cas

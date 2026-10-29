@@ -22,14 +22,14 @@ using CASDatabases =
 
 TEST(CASConfigurationTest, isConfigured) {
   CASConfiguration Config;
-  EXPECT_FALSE(static_cast<bool>(Config));
+  EXPECT_FALSE(Config);
 
   Config.CASPath = "/tmp";
-  EXPECT_TRUE(static_cast<bool>(Config));
+  EXPECT_TRUE(Config);
 
   Config.CASPath.clear();
   Config.PluginPath = "/test.plug";
-  EXPECT_TRUE(static_cast<bool>(Config));
+  EXPECT_TRUE(Config);
 }
 
 TEST(CASConfigurationTest, equality) {

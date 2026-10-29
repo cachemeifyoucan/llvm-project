@@ -36,6 +36,5 @@ CASConfiguration::createDatabases() const {
   if (!PluginPath.empty())
     return createPluginCASDatabases(PluginPath, PathBuf, PluginOptions);
 
-  std::pair<std::unique_ptr<ObjectStore>, std::unique_ptr<ActionCache>> DBs;
   return createOnDiskUnifiedCASDatabases(PathBuf);
 }
