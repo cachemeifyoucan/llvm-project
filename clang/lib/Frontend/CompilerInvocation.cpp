@@ -1506,8 +1506,7 @@ static std::string serializeXRayInstrumentationBundle(const XRayInstrSet &S) {
 }
 
 static IntrusiveRefCntPtr<llvm::vfs::FileSystem>
-createBaseFS(const FileSystemOptions &FSOpts, const FrontendOptions &FEOpts,
-             const CASOptions &CASOpts, DiagnosticsEngine &Diags,
+createBaseFS(const FrontendOptions &FEOpts, DiagnosticsEngine &Diags,
              IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS,
              std::shared_ptr<llvm::cas::ObjectStore> CAS) {
   if (FEOpts.CASIncludeTreeID.empty())
@@ -3192,8 +3191,7 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
 }
 
 static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
-                              CASOptions &CASOpts, DiagnosticsEngine &Diags,
-                              bool &IsHeaderFile) {
+                              DiagnosticsEngine &Diags, bool &IsHeaderFile) {
   unsigned NumErrorsBefore = Diags.getNumErrors();
 
   FrontendOptions &FrontendOpts = Opts;
@@ -5321,8 +5319,7 @@ bool CompilerInvocation::CreateFromArgsImpl(
   ParseAnalyzerArgs(Res.getAnalyzerOpts(), Args, Diags);
   ParseSSAFArgs(Res.getSSAFOpts(), Args, Diags);
   ParseDiagnosticArgs(Res.getDiagnosticOpts(), Args, &Diags);
-  ParseFrontendArgs(Res.getFrontendOpts(), Args, Res.getCASOpts(), Diags,
-                    LangOpts.IsHeaderFile);
+  ParseFrontendArgs(Res.getFrontendOpts(), Args, Diags, LangOpts.IsHeaderFile);
   // FIXME: We shouldn't have to pass the DashX option around here
   InputKind DashX = Res.getFrontendOpts().DashX;
   ParseTargetArgs(Res.getTargetOpts(), Args, Diags);
@@ -5767,8 +5764,8 @@ clang::createVFSFromCompilerInvocation(
     std::shared_ptr<llvm::cas::ObjectStore> CAS) {
   return createVFSFromOverlayFiles(
       CI.getHeaderSearchOpts().VFSOverlayFiles, Diags,
-      createBaseFS(CI.getFileSystemOpts(), CI.getFrontendOpts(),
-                   CI.getCASOpts(), Diags, std::move(BaseFS), std::move(CAS)));
+      createBaseFS(CI.getFrontendOpts(), Diags, std::move(BaseFS),
+                   std::move(CAS)));
 }
 
 IntrusiveRefCntPtr<llvm::vfs::FileSystem> clang::createVFSFromOverlayFiles(
