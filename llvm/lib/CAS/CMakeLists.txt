@@ -11,6 +11,7 @@ add_llvm_component_library(LLVMCAS
   CASConfiguration.cpp
   CASFileSystem.cpp
   CASNodeSchema.cpp
+  CASProvidingFileSystem.cpp
   DatabaseFile.cpp
   InMemoryCAS.cpp
   MappedFileRegionArena.cpp
