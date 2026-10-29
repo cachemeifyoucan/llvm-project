@@ -1177,6 +1177,63 @@ TEST_F(CommandLineTest, PluginArgsRoundTripDeterminism) {
   ASSERT_TRUE(CompilerInvocation::CreateFromArgs(Invocation, Args, *Diags));
 }
 
+TEST_F(CommandLineTest, CASOptionsNotPresent) {
+  const char *Args[] = {""};
+
+  ASSERT_TRUE(CompilerInvocation::CreateFromArgs(Invocation, Args, *Diags));
+  EXPECT_EQ(Invocation.getCASOpts(), CASOptions());
+
+  Invocation.generateCC1CommandLine(GeneratedArgs, *this);
+  EXPECT_THAT(GeneratedArgs, Not(Contains(HasSubstr("-fcas-"))));
+}
+
+TEST_F(CommandLineTest, CASOptionsRoundTrip) {
+  const char *Args[] = {"-fcas-path",          "path/to/cas",
+                        "-fcas-plugin-path",   "path/to/plugin",
+                        "-fcas-plugin-option", "first=1",
+                        "-fcas-plugin-option", "second=2=two",
+                        "-fcas-plugin-option", "third"};
+
+  ASSERT_TRUE(CompilerInvocation::CreateFromArgs(Invocation, Args, *Diags));
+  const CASOptions &Opts = Invocation.getCASOpts();
+  EXPECT_EQ(Opts.CASPath, "path/to/cas");
+  EXPECT_EQ(Opts.PluginPath, "path/to/plugin");
+  std::vector<std::pair<std::string, std::string>> ExpectedPluginOptions = {
+      {"first", "1"}, {"second", "2=two"}, {"third", ""}};
+  EXPECT_EQ(Opts.PluginOptions, ExpectedPluginOptions);
+
+  Invocation.generateCC1CommandLine(GeneratedArgs, *this);
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("-fcas-path"), 1));
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("path/to/cas"), 1));
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("-fcas-plugin-path"), 1));
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("path/to/plugin"), 1));
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("-fcas-plugin-option"), 3));
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("first=1"), 1));
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("second=2=two"), 1));
+  EXPECT_THAT(GeneratedArgs, ContainsN(StrEq("third="), 1));
+
+  // Parsing the generated arguments gives back the same options.
+  CompilerInvocation Invocation2;
+  ASSERT_TRUE(
+      CompilerInvocation::CreateFromArgs(Invocation2, GeneratedArgs, *Diags));
+  EXPECT_EQ(Invocation2.getCASOpts(), Opts);
+}
+
+TEST_F(CommandLineTest, CASOptionsCopyOnWrite) {
+  const char *Args[] = {"-fcas-path", "path/to/cas"};
+  ASSERT_TRUE(CompilerInvocation::CreateFromArgs(Invocation, Args, *Diags));
+
+  CowCompilerInvocation A(Invocation);
+  EXPECT_EQ(A.getCASOpts().CASPath, "path/to/cas");
+
+  CowCompilerInvocation B(A);
+  EXPECT_EQ(&A.getCASOpts(), &B.getCASOpts());
+  B.getMutCASOpts().CASPath = "other/cas";
+  EXPECT_NE(&A.getCASOpts(), &B.getCASOpts());
+  EXPECT_EQ(A.getCASOpts().CASPath, "path/to/cas");
+  EXPECT_EQ(B.getCASOpts().CASPath, "other/cas");
+}
+
 TEST_F(CommandLineTest, WarningSuppressionMappings) {
   const char *Args[] = {"--warning-suppression-mappings=foo.txt"};
 

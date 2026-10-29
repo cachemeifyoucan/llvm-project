@@ -11,16 +11,20 @@
 #include "clang/Driver/CreateInvocationFromArgs.h"
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/FrontendActions.h"
+#include "clang/Frontend/TextDiagnosticBuffer.h"
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
+#include "llvm/CAS/ActionCache.h"
+#include "llvm/CAS/ObjectStore.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/VirtualFileSystem.h"
+#include "llvm/Testing/Support/SupportHelpers.h"
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -114,6 +118,62 @@ TEST(CompilerInstance, AllowDiagnosticLogWithUnownedDiagnosticConsumer) {
 
   Diags->Report(diag::err_expected) << "no crash";
   ASSERT_EQ(DiagnosticOutput, "error: expected no crash\n");
+}
+
+TEST(CompilerInstance, CASDatabases) {
+  auto Invocation = std::make_shared<CompilerInvocation>();
+  CompilerInstance Instance(std::move(Invocation));
+  Instance.createDiagnostics(new IgnoringDiagConsumer());
+
+  // Nothing is created until requested.
+  EXPECT_EQ(Instance.getCASDatabases().first, nullptr);
+  EXPECT_EQ(Instance.getCASDatabases().second, nullptr);
+
+  // The default configuration is an in-memory CAS, and it is created once.
+  auto [CAS, Cache] = Instance.getOrCreateCASDatabases();
+  ASSERT_NE(CAS, nullptr);
+  ASSERT_NE(Cache, nullptr);
+  EXPECT_EQ(&Instance.getOrCreateObjectStore(), CAS.get());
+  EXPECT_EQ(&Instance.getOrCreateActionCache(), Cache.get());
+  EXPECT_EQ(Instance.getCASDatabases(), std::make_pair(CAS, Cache));
+  EXPECT_FALSE(Instance.getDiagnostics().hasErrorOccurred());
+}
+
+TEST(CompilerInstance, SetCASDatabases) {
+  auto Invocation = std::make_shared<CompilerInvocation>();
+  CompilerInstance Instance(std::move(Invocation));
+  Instance.createDiagnostics(new IgnoringDiagConsumer());
+
+  std::shared_ptr<llvm::cas::ObjectStore> CAS = llvm::cas::createInMemoryCAS();
+  std::shared_ptr<llvm::cas::ActionCache> Cache =
+      llvm::cas::createInMemoryActionCache();
+  Instance.setCASDatabases(CAS, Cache);
+  EXPECT_EQ(Instance.getOrCreateCASDatabases(), std::make_pair(CAS, Cache));
+}
+
+TEST(CompilerInstance, CASDatabasesInvalidPath) {
+  if (!llvm::cas::isOnDiskCASEnabled())
+    GTEST_SKIP() << "on-disk CAS is not enabled";
+
+  // Put a regular file where the CAS should be.
+  unittest::TempDir Dir("cas-invalid", /*Unique=*/true);
+  unittest::TempFile File(Dir.path("cas"), /*Suffix=*/"",
+                          /*Contents=*/"contents");
+
+  auto Invocation = std::make_shared<CompilerInvocation>();
+  Invocation->getCASOpts().CASPath = File.path().str();
+  CompilerInstance Instance(std::move(Invocation));
+  auto *Diags = new TextDiagnosticBuffer();
+  Instance.createDiagnostics(Diags);
+
+  // Opening the CAS fails with a diagnostic, and falls back to empty in-memory
+  // databases so that callers do not need to check for null.
+  auto [CAS, Cache] = Instance.getOrCreateCASDatabases();
+  EXPECT_NE(CAS, nullptr);
+  EXPECT_NE(Cache, nullptr);
+  ASSERT_EQ(Diags->getNumErrors(), 1u);
+  EXPECT_NE(Diags->err_begin()->second.find("CAS cannot be initialized"),
+            std::string::npos);
 }
 
 TEST(CompilerInstance, MultipleInputsCleansFileIDs) {

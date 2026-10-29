@@ -130,6 +130,7 @@ CompilerInvocationBase::CompilerInvocationBase()
       AnalyzerOpts(std::make_shared<AnalyzerOptions>()),
       MigratorOpts(std::make_shared<MigratorOptions>()),
       APINotesOpts(std::make_shared<APINotesOptions>()),
+      CASOpts(std::make_shared<CASOptions>()),
       CodeGenOpts(std::make_shared<CodeGenOptions>()),
       FSOpts(std::make_shared<FileSystemOptions>()),
       FrontendOpts(std::make_shared<FrontendOptions>()),
@@ -148,6 +149,7 @@ CompilerInvocationBase::deep_copy_assign(const CompilerInvocationBase &X) {
     AnalyzerOpts = make_shared_copy(X.getAnalyzerOpts());
     MigratorOpts = make_shared_copy(X.getMigratorOpts());
     APINotesOpts = make_shared_copy(X.getAPINotesOpts());
+    CASOpts = make_shared_copy(X.getCASOpts());
     CodeGenOpts = make_shared_copy(X.getCodeGenOpts());
     FSOpts = make_shared_copy(X.getFileSystemOpts());
     FrontendOpts = make_shared_copy(X.getFrontendOpts());
@@ -169,6 +171,7 @@ CompilerInvocationBase::shallow_copy_assign(const CompilerInvocationBase &X) {
     AnalyzerOpts = X.AnalyzerOpts;
     MigratorOpts = X.MigratorOpts;
     APINotesOpts = X.APINotesOpts;
+    CASOpts = X.CASOpts;
     CodeGenOpts = X.CodeGenOpts;
     FSOpts = X.FSOpts;
     FrontendOpts = X.FrontendOpts;
@@ -227,6 +230,10 @@ MigratorOptions &CowCompilerInvocation::getMutMigratorOpts() {
 
 APINotesOptions &CowCompilerInvocation::getMutAPINotesOpts() {
   return ensureOwned(APINotesOpts);
+}
+
+CASOptions &CowCompilerInvocation::getMutCASOpts() {
+  return ensureOwned(CASOpts);
 }
 
 CodeGenOptions &CowCompilerInvocation::getMutCodeGenOpts() {
@@ -502,6 +509,31 @@ static void denormalizeStringVector(ArgumentConsumer Consumer,
     llvm_unreachable("Cannot denormalize an option with option class "
                      "incompatible with string vector denormalization.");
   }
+}
+
+using StringPair = std::pair<std::string, std::string>;
+
+static std::optional<std::vector<std::pair<std::string, std::string>>>
+normalizeStringPairVector(OptSpecifier Opt, int, const ArgList &Args,
+                          DiagnosticsEngine &) {
+  std::vector<std::pair<std::string, std::string>> Pairs;
+  for (StringRef Arg : Args.getAllArgValues(Opt)) {
+    auto [L, R] = Arg.split('=');
+    Pairs.emplace_back(std::string(L), std::string(R));
+  }
+  return Pairs;
+}
+
+static void denormalizeStringPairVector(
+    ArgumentConsumer Consumer, unsigned SpellingOffset,
+    Option::OptionClass OptClass, unsigned TableIndex,
+    const std::vector<std::pair<std::string, std::string>> &Values) {
+  std::vector<std::string> Joined;
+  for (const auto &Pair : Values) {
+    Joined.push_back(Pair.first + "=" + Pair.second);
+  }
+  denormalizeStringVector(Consumer, SpellingOffset, OptClass, TableIndex,
+                          Joined);
 }
 
 static std::optional<std::string> normalizeTriple(OptSpecifier Opt,
@@ -2517,6 +2549,29 @@ static bool checkVerifyPrefixes(const std::vector<std::string> &VerifyPrefixes,
       Diags.Report(diag::note_drv_verify_prefix_spelling);
     }
   }
+  return Success;
+}
+
+void CompilerInvocationBase::GenerateCASArgs(const CASOptions &Opts,
+                                             ArgumentConsumer Consumer) {
+  const CASOptions &CASOpts = Opts;
+
+#define CAS_OPTION_WITH_MARSHALLING(...)                                       \
+  GENERATE_OPTION_WITH_MARSHALLING(Consumer, __VA_ARGS__)
+#include "clang/Options/Options.inc"
+#undef CAS_OPTION_WITH_MARSHALLING
+}
+
+bool CompilerInvocation::ParseCASArgs(CASOptions &Opts, const ArgList &Args,
+                                      DiagnosticsEngine &Diags) {
+  CASOptions &CASOpts = Opts;
+  bool Success = true;
+
+#define CAS_OPTION_WITH_MARSHALLING(...)                                       \
+  PARSE_OPTION_WITH_MARSHALLING(Args, Diags, __VA_ARGS__)
+#include "clang/Options/Options.inc"
+#undef CAS_OPTION_WITH_MARSHALLING
+
   return Success;
 }
 
@@ -5162,6 +5217,7 @@ bool CompilerInvocation::CreateFromArgsImpl(
           << ArgString << Nearest;
   }
 
+  ParseCASArgs(Res.getCASOpts(), Args, Diags);
   ParseFileSystemArgs(Res.getFileSystemOpts(), Args, Diags);
   ParseMigratorArgs(Res.getMigratorOpts(), Args, Diags);
   ParseAnalyzerArgs(Res.getAnalyzerOpts(), Args, Diags);
@@ -5549,6 +5605,7 @@ void CompilerInvocationBase::generateCC1CommandLine(
     ArgumentConsumer Consumer) const {
   llvm::Triple T(getTargetOpts().Triple);
 
+  GenerateCASArgs(getCASOpts(), Consumer);
   GenerateFileSystemArgs(getFileSystemOpts(), Consumer);
   GenerateMigratorArgs(getMigratorOpts(), Consumer);
   GenerateAnalyzerArgs(getAnalyzerOpts(), Consumer);

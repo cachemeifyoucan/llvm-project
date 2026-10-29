@@ -49,6 +49,8 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/CAS/ActionCache.h"
+#include "llvm/CAS/ObjectStore.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/AdvisoryLock.h"
@@ -871,6 +873,42 @@ llvm::vfs::OutputBackend &CompilerInstance::getOrCreateOutputManager() {
   return getOutputManager();
 }
 
+std::pair<std::shared_ptr<llvm::cas::ObjectStore>,
+          std::shared_ptr<llvm::cas::ActionCache>>
+CompilerInstance::getOrCreateCASDatabases(DiagnosticsEngine *Diags) {
+  if (CAS && ActionCache)
+    return {CAS, ActionCache};
+  if (!Diags)
+    Diags = this->Diagnostics.get();
+  // Create a new CAS databases from the CompilerInvocation. Future calls will
+  // use the same CAS.
+  std::tie(CAS, ActionCache) =
+      getCASOpts().createDatabases(*Diags, /*CreateEmptyDBsOnFailure=*/true);
+  return {CAS, ActionCache};
+}
+
+void CompilerInstance::setCASDatabases(
+    std::shared_ptr<llvm::cas::ObjectStore> CAS,
+    std::shared_ptr<llvm::cas::ActionCache> ActionCache) {
+  assert((!this->CAS || this->CAS == CAS) && "modifying CompilerInstance CAS");
+  assert((!this->ActionCache || this->ActionCache == ActionCache) &&
+         "modifying CompilerInstance Cache");
+  this->CAS = std::move(CAS);
+  this->ActionCache = std::move(ActionCache);
+}
+
+llvm::cas::ObjectStore &CompilerInstance::getOrCreateObjectStore() {
+  if (!CAS)
+    getOrCreateCASDatabases();
+  return *CAS;
+}
+
+llvm::cas::ActionCache &CompilerInstance::getOrCreateActionCache() {
+  if (!ActionCache)
+    getOrCreateCASDatabases();
+  return *ActionCache;
+}
+
 std::unique_ptr<raw_pwrite_stream> CompilerInstance::createOutputFile(
     StringRef OutputPath, bool Binary, bool RemoveFileOnSignal,
     bool UseTemporary, bool CreateMissingDirectories, bool SetOnlyIfDifferent) {
@@ -1240,6 +1278,9 @@ std::unique_ptr<CompilerInstance> CompilerInstance::cloneForModuleCompileImpl(
   auto &Instance = *InstancePtr;
 
   auto &Inv = Instance.getInvocation();
+
+  if (CAS)
+    Instance.setCASDatabases(CAS, ActionCache);
 
   if (ThreadSafeConfig) {
     Instance.setVirtualFileSystem(ThreadSafeConfig->getVFS());

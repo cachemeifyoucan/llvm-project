@@ -16,6 +16,7 @@
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/LangStandard.h"
+#include "clang/CAS/CASOptions.h"
 #include "clang/Frontend/DependencyOutputOptions.h"
 #include "clang/Frontend/FrontendOptions.h"
 #include "clang/Frontend/MigratorOptions.h"
@@ -102,6 +103,9 @@ protected:
   /// Options controlling API notes.
   std::shared_ptr<APINotesOptions> APINotesOpts;
 
+  /// Options configuring the CAS.
+  std::shared_ptr<CASOptions> CASOpts;
+
   /// Options controlling IRgen and the backend.
   std::shared_ptr<CodeGenOptions> CodeGenOpts;
 
@@ -148,6 +152,7 @@ public:
   const AnalyzerOptions &getAnalyzerOpts() const { return *AnalyzerOpts; }
   const MigratorOptions &getMigratorOpts() const { return *MigratorOpts; }
   const APINotesOptions &getAPINotesOpts() const { return *APINotesOpts; }
+  const CASOptions &getCASOpts() const { return *CASOpts; }
   const CodeGenOptions &getCodeGenOpts() const { return *CodeGenOpts; }
   const FileSystemOptions &getFileSystemOpts() const { return *FSOpts; }
   const FrontendOptions &getFrontendOpts() const { return *FrontendOpts; }
@@ -212,6 +217,21 @@ private:
                                   const std::string &OutputFile,
                                   const LangOptions *LangOpts);
   /// @}
+
+public:
+  /// Generate command line options from CASOptions.
+  static void GenerateCASArgs(const CASOptions &Opts,
+                              ArgumentConsumer Consumer);
+  static void GenerateCASArgs(const CASOptions &Opts,
+                              SmallVectorImpl<const char *> &Args,
+                              StringAllocator SA) {
+    GenerateCASArgs(Opts, [&](const Twine &Arg) {
+      // No need to allocate static string literals.
+      Args.push_back(Arg.isSingleStringLiteral()
+                         ? Arg.getSingleStringRef().data()
+                         : SA(Arg));
+    });
+  }
 };
 
 class CowCompilerInvocation;
@@ -253,6 +273,7 @@ public:
   // the mutable getters with the same names.
   using CompilerInvocationBase::getAnalyzerOpts;
   using CompilerInvocationBase::getAPINotesOpts;
+  using CompilerInvocationBase::getCASOpts;
   using CompilerInvocationBase::getCodeGenOpts;
   using CompilerInvocationBase::getDependencyOutputOpts;
   using CompilerInvocationBase::getDiagnosticOpts;
@@ -277,6 +298,7 @@ public:
   AnalyzerOptions &getAnalyzerOpts() { return *AnalyzerOpts; }
   MigratorOptions &getMigratorOpts() { return *MigratorOpts; }
   APINotesOptions &getAPINotesOpts() { return *APINotesOpts; }
+  CASOptions &getCASOpts() { return *CASOpts; }
   CodeGenOptions &getCodeGenOpts() { return *CodeGenOpts; }
   FileSystemOptions &getFileSystemOpts() { return *FSOpts; }
   FrontendOptions &getFrontendOpts() { return *FrontendOpts; }
@@ -347,6 +369,10 @@ public:
   /// implicit modules.
   void clearImplicitModuleBuildOptions();
 
+  /// Parse command line options that map to \p CASOptions.
+  static bool ParseCASArgs(CASOptions &Opts, const llvm::opt::ArgList &Args,
+                           DiagnosticsEngine &Diags);
+
 private:
   static bool CreateFromArgsImpl(CompilerInvocation &Res,
                                  ArrayRef<const char *> CommandLineArgs,
@@ -411,6 +437,7 @@ public:
   AnalyzerOptions &getMutAnalyzerOpts();
   MigratorOptions &getMutMigratorOpts();
   APINotesOptions &getMutAPINotesOpts();
+  CASOptions &getMutCASOpts();
   CodeGenOptions &getMutCodeGenOpts();
   FileSystemOptions &getMutFileSystemOpts();
   FrontendOptions &getMutFrontendOpts();

@@ -101,6 +101,12 @@ class CompilerInstance : public ModuleLoader {
   /// Auxiliary Target info.
   IntrusiveRefCntPtr<TargetInfo> AuxTarget;
 
+  /// The CAS, if any.
+  std::shared_ptr<llvm::cas::ObjectStore> CAS;
+
+  /// The ActionCache, if any.
+  std::shared_ptr<llvm::cas::ActionCache> ActionCache;
+
   /// The file manager.
   IntrusiveRefCntPtr<FileManager> FileMgr;
 
@@ -373,6 +379,9 @@ public:
   TargetOptions &getTargetOpts() {
     return Invocation->getTargetOpts();
   }
+
+  CASOptions &getCASOpts() { return Invocation->getCASOpts(); }
+  const CASOptions &getCASOpts() const { return Invocation->getCASOpts(); }
   const TargetOptions &getTargetOpts() const {
     return Invocation->getTargetOpts();
   }
@@ -519,6 +528,14 @@ public:
 
   llvm::vfs::OutputBackend &getOutputManager();
   llvm::vfs::OutputBackend &getOrCreateOutputManager();
+
+  /// @}
+  /// @name CAS
+  /// @{
+
+  /// Get the CAS, or create it using the configuration in CompilerInvocation.
+  llvm::cas::ObjectStore &getOrCreateObjectStore();
+  llvm::cas::ActionCache &getOrCreateActionCache();
 
   /// @}
   /// @name Source Manager
@@ -1029,6 +1046,22 @@ public:
   void setInheritedDirectoryDependencies(ArrayRef<std::string> Dirs) {
     InheritedDirectoryDependencies.assign(Dirs.begin(), Dirs.end());
   }
+
+  std::pair<std::shared_ptr<llvm::cas::ObjectStore>,
+            std::shared_ptr<llvm::cas::ActionCache>>
+  getOrCreateCASDatabases(DiagnosticsEngine *Diags = nullptr);
+
+  /// Get the CAS databases if they have already been created or set, otherwise
+  /// a pair of null pointers. Unlike \c getOrCreateCASDatabases() this does not
+  /// open a CAS that is not being used.
+  std::pair<std::shared_ptr<llvm::cas::ObjectStore>,
+            std::shared_ptr<llvm::cas::ActionCache>>
+  getCASDatabases() const {
+    return {CAS, ActionCache};
+  }
+
+  void setCASDatabases(std::shared_ptr<llvm::cas::ObjectStore> CAS,
+                       std::shared_ptr<llvm::cas::ActionCache> Cache);
 };
 
 } // end namespace clang

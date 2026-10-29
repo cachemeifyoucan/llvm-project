@@ -337,6 +337,7 @@ class PreprocessorOutputOpts<string base>
   : KeyPathAndMacro<"PreprocessorOutputOpts.", base, "PREPROCESSOR_OUTPUT_"> {}
 class DependencyOutputOpts<string base>
   : KeyPathAndMacro<"DependencyOutputOpts.", base, "DEPENDENCY_OUTPUT_"> {}
+class CASOpts<string base> : KeyPathAndMacro<"CASOpts.", base, "CAS_"> {}
 class CodeGenOpts<string base>
   : KeyPathAndMacro<"CodeGenOpts.", base, "CODEGEN_"> {}
 class HeaderSearchOpts<string base>
@@ -9316,6 +9317,40 @@ def fsycl_is_host : Flag<["-"], "fsycl-is-host">,
   HelpText<"SYCL host compilation">,
   Visibility<[CC1Option]>,
   MarshallingInfoFlag<LangOpts<"SYCLIsHost">>;
+
+//===----------------------------------------------------------------------===//
+// CAS Options
+//===----------------------------------------------------------------------===//
+
+// -cc1 options. These should be available in the driver too, but the driver
+// doesn't currently support most of them. For example, the driver should
+// read only from -fcas-fs if specified, in which case the -fdepscan
+// should scan to prune the CAS filesystem. Also, -fdepscan shouldn't
+// override -fcas / etc., it should just add those if not already specified.
+let Visibility = [CC1Option] in {
+
+// FIXME: Add to driver once it's supported by (not clobbered by) -fdepscan.
+//
+// The driver should also have:
+// - '-fcas-path=<dir>|auto' ('='-joined alias).
+// - '-fno-cas-path' (same as '-fcas-path ""', the default).
+def fcas_path : Separate<["-"], "fcas-path">,
+    Group<f_Group>, MetaVarName<"<dir>|auto">,
+    HelpText<"Path to a persistent on-disk backing store for the builtin CAS."
+             " '-fcas-path=auto' chooses a path in the user's system cache.">,
+    MarshallingInfoString<CASOpts<"CASPath">>;
+
+def fcas_plugin_path : Separate<["-"], "fcas-plugin-path">,
+    Group<f_Group>, MetaVarName<"<pathname>">,
+    HelpText<"Path to a shared library implementing the LLVM CAS plugin API.">,
+    MarshallingInfoString<CASOpts<"PluginPath">>;
+
+def fcas_plugin_option : Separate<["-"], "fcas-plugin-option">,
+    Group<f_Group>, MetaVarName<"<name>=<value>">,
+    HelpText<"Option to pass to the CAS plugin.">,
+    MarshallingInfoStringPairVector<CASOpts<"PluginOptions">>;
+
+} // let Visibility = [CC1Option]
 
 def sycl_std_EQ : Joined<["-"], "sycl-std=">, Group<sycl_Group>,
   Flags<[NoArgumentUnused]>,

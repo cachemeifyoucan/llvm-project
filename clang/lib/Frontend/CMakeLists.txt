@@ -3,6 +3,7 @@ add_subdirectory(Rewrite)
 set(LLVM_LINK_COMPONENTS
   BitReader
   BitstreamReader
+  CAS
   Option
   Plugins
   ProfileData
@@ -57,5 +58,6 @@ add_clang_library(clangFrontend
   clangLex
   clangParse
   clangSema
+  clangCAS
   clangSerialization
   )
