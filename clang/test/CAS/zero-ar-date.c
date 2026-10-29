@@ -11,10 +11,11 @@
 // RUN: rm -rf %t
 // RUN: mkdir %t
 
-// Confirm "-greproducible" is passed through to -cc1.
+// Confirm "-greproducible" is only handled by the driver.
 // RUN: %clang -greproducible -target x86_64-apple-macos11.0 -x c -o %t/t.o -c %s -### 2>&1 \
 // RUN: | FileCheck %s -check-prefix=CHECK-CC1
-// CHECK-CC1: "-greproducible"
+// CHECK-CC1: "-cc1"
+// CHECK-CC1-NOT: "-greproducible"
 
 // Build an object file with debug info. Confirm the link command sets
 // ZERO_AR_DATE to make the output reproducible.

@@ -5360,11 +5360,9 @@ def gcoff : Joined<["-"], "gcoff">, Group<g_Group>, Flags<[Unsupported]>;
 def gxcoff : Joined<["-"], "gxcoff">, Group<g_Group>, Flags<[Unsupported]>;
 def gvms : Joined<["-"], "gvms">, Group<g_Group>, Flags<[Unsupported]>;
 def gtoggle : Flag<["-"], "gtoggle">, Group<g_flags_Group>, Flags<[Unsupported]>;
-defm reproducible : BoolOption<"g", "reproducible",
-  CodeGenOpts<"ReproducibleDebugInfo">, DefaultFalse,
-  PosFlag<SetTrue, [], [ClangOption, CC1Option],
-          "Tune debug info to be reproducible.">,
-  NegFlag<SetFalse>>, Group<g_flags_Group>;
+def greproducible : Flag<["-"], "greproducible">, Group<g_flags_Group>,
+  HelpText<"Tune debug info and linking to be reproducible.">;
+def gno_reproducible : Flag<["-"], "gno-reproducible">, Group<g_flags_Group>;
 def grecord_command_line : Flag<["-"], "grecord-command-line">,
   Group<g_flags_Group>,
   Visibility<[ClangOption, FlangOption]>;
