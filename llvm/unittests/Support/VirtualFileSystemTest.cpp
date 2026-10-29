@@ -263,6 +263,102 @@ TEST(VirtualFileSystemTest, FileRTTI) {
   EXPECT_FALSE(isa<RTTIDummyFile>(F->get()));
 }
 
+namespace {
+/// A file type that keeps its type when given a fixed status.
+struct TaggedFile : public RTTIExtends<TaggedFile, vfs::File> {
+  static const char ID;
+  std::unique_ptr<vfs::File> Inner;
+  std::optional<vfs::Status> FixedStatus;
+
+  explicit TaggedFile(std::unique_ptr<vfs::File> Inner)
+      : Inner(std::move(Inner)) {}
+
+  ErrorOr<vfs::Status> status() override {
+    if (FixedStatus)
+      return *FixedStatus;
+    return Inner->status();
+  }
+  ErrorOr<std::unique_ptr<MemoryBuffer>> getBuffer(const Twine &Name,
+                                                   int64_t FileSize,
+                                                   bool RequiresNullTerminator,
+                                                   bool IsVolatile) override {
+    return Inner->getBuffer(Name, FileSize, RequiresNullTerminator, IsVolatile);
+  }
+  std::error_code close() override { return Inner->close(); }
+
+protected:
+  std::unique_ptr<vfs::File>
+  createWithFixedStatus(std::unique_ptr<vfs::File> Self,
+                        vfs::Status S) override {
+    FixedStatus = std::move(S);
+    return Self;
+  }
+};
+const char TaggedFile::ID = 0;
+
+/// Wraps files whose path contains "tagged" in a TaggedFile.
+class TaggingFileSystem : public vfs::ProxyFileSystem {
+public:
+  using ProxyFileSystem::ProxyFileSystem;
+
+  ErrorOr<std::unique_ptr<vfs::File>>
+  openFileForRead(const Twine &Path) override {
+    auto F = ProxyFileSystem::openFileForRead(Path);
+    if (!F || !StringRef(Path.str()).contains("tagged"))
+      return F;
+    return std::make_unique<TaggedFile>(std::move(*F));
+  }
+};
+} // namespace
+
+TEST(VirtualFileSystemTest, GetWithFixedStatus) {
+  vfs::Status S("/a", llvm::sys::fs::UniqueID(1, 1), sys::TimePoint<>(), 0, 0,
+                0, sys::fs::file_type::regular_file, sys::fs::all_all);
+
+  // The default wraps the file, so the result no longer has the derived type.
+  std::unique_ptr<vfs::File> F = vfs::File::getWithFixedStatus(
+      std::make_unique<RTTIDummyFile>(S), S.copyWithNewName(S, "/b"));
+  EXPECT_FALSE(isa<RTTIDummyFile>(F.get()));
+  ASSERT_TRUE(F->status());
+  EXPECT_EQ(F->status()->getName(), "/b");
+
+  // File types can override the wrapping.
+  F = vfs::File::getWithFixedStatus(
+      std::make_unique<TaggedFile>(std::make_unique<DummyFile>(S)),
+      S.copyWithNewName(S, "/c"));
+  EXPECT_TRUE(isa<TaggedFile>(F.get()));
+  ASSERT_TRUE(F->status());
+  EXPECT_EQ(F->status()->getName(), "/c");
+}
+
+TEST(VirtualFileSystemTest, RedirectingFileSystemKeepsFileType) {
+  auto MemFS = makeIntrusiveRefCnt<vfs::InMemoryFileSystem>();
+  MemFS->addFile("/real/tagged", 0, MemoryBuffer::getMemBuffer("tagged"));
+  MemFS->addFile("/real/plain", 0, MemoryBuffer::getMemBuffer("plain"));
+  auto TaggingFS = makeIntrusiveRefCnt<TaggingFileSystem>(MemFS);
+
+  auto FS = vfs::RedirectingFileSystem::create(
+      {{"/virtual/tagged", "/real/tagged"}, {"/virtual/plain", "/real/plain"}},
+      /*UseExternalNames=*/false, TaggingFS);
+
+  auto F = FS->openFileForRead("/virtual/tagged");
+  ASSERT_TRUE(F);
+  EXPECT_TRUE(isa<TaggedFile>(F->get()));
+  auto S = (*F)->status();
+  ASSERT_TRUE(S);
+  EXPECT_EQ(S->getName(), "/virtual/tagged");
+  auto Buf = (*F)->getBuffer("tagged");
+  ASSERT_TRUE(Buf);
+  EXPECT_EQ((*Buf)->getBuffer(), "tagged");
+
+  F = FS->openFileForRead("/virtual/plain");
+  ASSERT_TRUE(F);
+  EXPECT_FALSE(isa<TaggedFile>(F->get()));
+  S = (*F)->status();
+  ASSERT_TRUE(S);
+  EXPECT_EQ(S->getName(), "/virtual/plain");
+}
+
 TEST(VirtualFileSystemTest, StatusQueries) {
   auto D = makeIntrusiveRefCnt<DummyFileSystem>();
   ErrorOr<vfs::Status> Status((std::error_code()));

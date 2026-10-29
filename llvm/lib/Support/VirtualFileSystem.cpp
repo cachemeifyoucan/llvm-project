@@ -2587,6 +2587,18 @@ public:
 
 } // namespace
 
+std::unique_ptr<File> File::getWithFixedStatus(std::unique_ptr<File> F,
+                                               Status S) {
+  File &Inner = *F;
+  return Inner.createWithFixedStatus(std::move(F), std::move(S));
+}
+
+std::unique_ptr<File> File::createWithFixedStatus(std::unique_ptr<File> Self,
+                                                  Status S) {
+  assert(Self.get() == this && "Self must own this file");
+  return std::make_unique<FileWithFixedStatus>(std::move(Self), std::move(S));
+}
+
 ErrorOr<std::unique_ptr<File>>
 File::getWithPath(ErrorOr<std::unique_ptr<File>> Result, const Twine &P) {
   // See \c getRedirectedFileStatus - don't update path if it's exposing an
@@ -2658,8 +2670,7 @@ RedirectingFileSystem::openFileForRead(const Twine &OriginalPath) {
   // replace the underlying path if the external name is being used.
   Status S = getRedirectedFileStatus(
       OriginalPath, RE->useExternalName(UseExternalNames), *ExternalStatus);
-  return std::unique_ptr<File>(
-      std::make_unique<FileWithFixedStatus>(std::move(*ExternalFile), S));
+  return File::getWithFixedStatus(std::move(*ExternalFile), std::move(S));
 }
 
 std::error_code

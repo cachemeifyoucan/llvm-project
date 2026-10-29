@@ -144,9 +144,23 @@ public:
   static ErrorOr<std::unique_ptr<File>>
   getWithPath(ErrorOr<std::unique_ptr<File>> Result, const Twine &P);
 
+  /// Get a file that forwards to \p F but whose \c status() returns \p S.
+  ///
+  /// This is used by file systems that remap paths, such as
+  /// \c RedirectingFileSystem. It calls \c createWithFixedStatus() on \p F,
+  /// so that file types with an extended interface can preserve it.
+  static std::unique_ptr<File> getWithFixedStatus(std::unique_ptr<File> F,
+                                                  Status S);
+
 protected:
   // Set the file's underlying path.
   virtual void setPath(const Twine &Path) {}
+
+  /// Implementation of \c getWithFixedStatus(). \p Self owns this file. The
+  /// default implementation returns a wrapper that only overrides
+  /// \c status().
+  virtual std::unique_ptr<File>
+  createWithFixedStatus(std::unique_ptr<File> Self, Status S);
 };
 
 /// A member of a directory, yielded by a directory_iterator.
