@@ -55,6 +55,21 @@ static bool checkHeaderSearchPaths(const HeaderSearchOptions &HSOpts,
   }
   return false;
 }
+/// Create a mapper that undoes the path prefix mappings of \p CI. Files that
+/// were scanned or built with the mappings record canonical paths, which this
+/// maps back to the paths on disk.
+static llvm::PrefixMapper getReversePrefixMapper(const CompilerInvocation &CI) {
+  llvm::PrefixMapper Mapper;
+  DepscanPrefixMapping::configurePrefixMapper(CI, Mapper);
+  llvm::PrefixMapper ReverseMapper;
+  if (Mapper.empty())
+    return ReverseMapper;
+
+  ReverseMapper.addInverseRange(Mapper.getMappings());
+  ReverseMapper.sort();
+  return ReverseMapper;
+}
+
 namespace {
 using PrebuiltModuleFilesT = decltype(HeaderSearchOptions::PrebuiltModuleFiles);
 
@@ -68,11 +83,13 @@ public:
                          PrebuiltModulesAttrsMap &PrebuiltModulesASTMap,
                          const HeaderSearchOptions &HSOpts,
                          const LangOptions &LangOpts, DiagnosticsEngine &Diags,
-                         const ArrayRef<StringRef> StableDirs)
+                         const ArrayRef<StringRef> StableDirs,
+                         llvm::PrefixMapper ReverseMapper)
       : PrebuiltModuleFiles(PrebuiltModuleFiles),
         NewModuleFiles(NewModuleFiles),
         PrebuiltModulesASTMap(PrebuiltModulesASTMap), ExistingHSOpts(HSOpts),
-        ExistingLangOpts(LangOpts), Diags(Diags), StableDirs(StableDirs) {}
+        ExistingLangOpts(LangOpts), Diags(Diags), StableDirs(StableDirs),
+        ReverseMapper(std::move(ReverseMapper)) {}
 
   bool needsImportVisitation() const override { return true; }
   bool needsInputFileVisitation() override { return true; }
@@ -108,6 +125,9 @@ public:
         (!PrebuiltEntryIt->second.isInStableDir()))
       return false;
 
+    SmallString<256> MappedFilename;
+    if (ReverseMapper.map(Filename, MappedFilename))
+      Filename = MappedFilename;
     PrebuiltEntryIt->second.setInStableDir(
         isPathInStableDir(StableDirs, Filename));
     return PrebuiltEntryIt->second.isInStableDir();
@@ -137,8 +157,24 @@ public:
     if (PrebuiltMapEntry.second)
       PrebuiltModule.setInStableDir(!StableDirs.empty());
 
-    if (PrebuiltModule.isInStableDir())
-      PrebuiltModule.setInStableDir(areOptionsInStableDir(StableDirs, HSOpts));
+    if (PrebuiltModule.isInStableDir()) {
+      if (ReverseMapper.empty()) {
+        PrebuiltModule.setInStableDir(
+            areOptionsInStableDir(StableDirs, HSOpts));
+      } else {
+        // The module was built with path prefix mappings applied, so map its
+        // paths back before comparing them with the stable directories.
+        HeaderSearchOptions MappedHSOpts = HSOpts;
+        ReverseMapper.mapInPlace(MappedHSOpts.Sysroot);
+        ReverseMapper.mapInPlace(MappedHSOpts.ResourceDir);
+        for (auto &Entry : MappedHSOpts.UserEntries)
+          ReverseMapper.mapInPlace(Entry.Path);
+        for (auto &SysPrefix : MappedHSOpts.SystemHeaderPrefixes)
+          ReverseMapper.mapInPlace(SysPrefix.Prefix);
+        PrebuiltModule.setInStableDir(
+            areOptionsInStableDir(StableDirs, MappedHSOpts));
+      }
+    }
 
     return false;
   }
@@ -168,6 +204,7 @@ private:
   DiagnosticsEngine &Diags;
   std::string CurrentFile;
   const ArrayRef<StringRef> StableDirs;
+  llvm::PrefixMapper ReverseMapper;
 };
 } // namespace
 
@@ -184,7 +221,8 @@ static bool visitPrebuiltModule(StringRef PrebuiltModuleFilename,
 
   PrebuiltModuleListener Listener(ModuleFiles, Worklist, PrebuiltModulesASTMap,
                                   CI.getHeaderSearchOpts(), CI.getLangOpts(),
-                                  Diags, StableDirs);
+                                  Diags, StableDirs,
+                                  getReversePrefixMapper(CI.getInvocation()));
 
   Listener.visitModuleFile(ModuleFileName::makeExplicit(PrebuiltModuleFilename),
                            serialization::MK_ExplicitModule,
@@ -516,13 +554,7 @@ public:
       : DependencyFileGenerator(Opts) {}
 
   void initialize(const CompilerInvocation &CI) {
-    llvm::PrefixMapper Mapper;
-    DepscanPrefixMapping::configurePrefixMapper(CI, Mapper);
-    if (Mapper.empty())
-      return;
-
-    ReverseMapper.addInverseRange(Mapper.getMappings());
-    ReverseMapper.sort();
+    ReverseMapper = getReversePrefixMapper(CI);
   }
 
   void maybeAddDependency(StringRef Filename, bool FromModule, bool IsSystem,
