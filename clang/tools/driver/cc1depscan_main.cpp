@@ -534,7 +534,7 @@ int cc1depscan_main(ArrayRef<const char *> Argv, const char *Argv0,
                                                 .setAtomicWrite(false)));
   if (!OutputFile) {
     Diags.Report(diag::err_fe_unable_to_open_output)
-        << OutputArg->getValue() << llvm::toString(OutputFile.takeError());
+        << OutputPath << llvm::toString(OutputFile.takeError());
     return 1;
   }
 
