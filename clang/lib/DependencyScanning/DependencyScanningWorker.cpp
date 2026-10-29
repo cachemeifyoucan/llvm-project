@@ -488,8 +488,7 @@ computePrebuiltModulesASTMap(CompilerInstance &ScanInstance,
 }
 
 static std::unique_ptr<DependencyOutputOptions>
-createDependencyOutputOptions(const CompilerInvocation &Invocation,
-                              bool ForceIncludeSystemHeaders) {
+createDependencyOutputOptions(const CompilerInvocation &Invocation) {
   auto Opts = std::make_unique<DependencyOutputOptions>(
       Invocation.getDependencyOutputOpts());
   // We need at least one -MT equivalent for the generator of make dependency
@@ -497,11 +496,6 @@ createDependencyOutputOptions(const CompilerInvocation &Invocation,
   if (Opts->Targets.empty())
     Opts->Targets = {deduceDepTarget(Invocation.getFrontendOpts().OutputFile,
                                      Invocation.getFrontendOpts().Inputs)};
-  if (ForceIncludeSystemHeaders) {
-    // Only 'Make' scanning needs to force this because that mode depends on
-    // getting the dependencies directly from \p DependencyFileGenerator.
-    Opts->IncludeSystemHeaders = true;
-  }
 
   return Opts;
 }
@@ -801,9 +795,7 @@ class CompilerInstanceWithContext {
       return false;
 
     PrebuiltModuleASTMap = std::move(*MaybePrebuiltModulesASTMap);
-    // FIXME: Set ForceIncludeSystemHeaders for Make consumers.
-    OutputOpts = createDependencyOutputOptions(
-        *OriginalInvocation, /*ForceIncludeSystemHeaders=*/false);
+    OutputOpts = createDependencyOutputOptions(*OriginalInvocation);
 
     // We do not create the target in initializeScanCompilerInstance because
     // setting it here is unique for by-name lookups. We create the target only
