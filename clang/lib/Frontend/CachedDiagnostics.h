@@ -11,8 +11,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_CLANG_TOOLS_DRIVER_CACHEDDIAGNOSTICS_H
-#define LLVM_CLANG_TOOLS_DRIVER_CACHEDDIAGNOSTICS_H
+#ifndef LLVM_CLANG_LIB_FRONTEND_CACHEDDIAGNOSTICS_H
+#define LLVM_CLANG_LIB_FRONTEND_CACHEDDIAGNOSTICS_H
 
 #include "clang/Basic/LLVM.h"
 #include "llvm/Support/PrefixMapper.h"
@@ -69,16 +69,16 @@ private:
 
 /// Compress serialized diagnostics. This is done transparently by serialization
 /// and is only exposed here for testing.
-StringRef compressCachedDiagonstics(StringRef Buffer,
+StringRef compressCachedDiagnostics(StringRef Buffer,
                                     SmallVectorImpl<uint8_t> &Storage);
 
 /// Decompress serialized diagnostics. This is done transparently by replay
 /// and is only exposed here for testing.
 Expected<StringRef>
-decompressCachedDiagonstics(StringRef Buffer,
+decompressCachedDiagnostics(StringRef Buffer,
                             SmallVectorImpl<uint8_t> &Storage);
 
 } // namespace cas
 } // namespace clang
 
-#endif // LLVM_CLANG_TOOLS_DRIVER_CACHEDDIAGNOSTICS_H
+#endif // LLVM_CLANG_LIB_FRONTEND_CACHEDDIAGNOSTICS_H

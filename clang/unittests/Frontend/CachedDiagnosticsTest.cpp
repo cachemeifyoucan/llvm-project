@@ -190,7 +190,7 @@ TEST(CachedDiagnosticsTest, ReplayWithInvalidBase64ReturnsError) {
   SmallVector<uint8_t, 512> Storage;
   StringRef YamlStr;
   ASSERT_THAT_ERROR(
-      decompressCachedDiagonstics(Serialized, Storage).moveInto(YamlStr),
+      decompressCachedDiagnostics(Serialized, Storage).moveInto(YamlStr),
       llvm::Succeeded());
   std::string Yaml(YamlStr);
 
@@ -206,7 +206,7 @@ TEST(CachedDiagnosticsTest, ReplayWithInvalidBase64ReturnsError) {
   // Corrupt the encoded value.
   Yaml[ValuePos] = '_';
 
-  std::string Corrupted = std::string(compressCachedDiagonstics(Yaml, Storage));
+  std::string Corrupted = std::string(compressCachedDiagnostics(Yaml, Storage));
 
   llvm::PrefixMapper Mapper;
   CachingDiagnosticsProcessor Replay(std::move(Mapper), *FileMgr);

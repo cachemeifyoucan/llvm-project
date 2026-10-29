@@ -680,12 +680,12 @@ CachedDiagnosticSerializer::serializeEmittedDiagnostics() {
   // need to track whether compression was used or not, see doc-comments of \p
   // serializeEmittedDiagnostics().
   SmallVector<uint8_t, 512> CompressedBuffer;
-  StringRef Output = compressCachedDiagonstics(YamlContents, CompressedBuffer);
+  StringRef Output = compressCachedDiagnostics(YamlContents, CompressedBuffer);
   return Output.str();
 }
 
 StringRef
-clang::cas::compressCachedDiagonstics(StringRef Buffer,
+clang::cas::compressCachedDiagnostics(StringRef Buffer,
                                       SmallVectorImpl<uint8_t> &Storage) {
   if (!compression::zstd::isAvailable() && !compression::zlib::isAvailable())
     return Buffer;
@@ -702,7 +702,7 @@ clang::cas::compressCachedDiagonstics(StringRef Buffer,
 }
 
 Expected<StringRef>
-clang::cas::decompressCachedDiagonstics(StringRef Buffer,
+clang::cas::decompressCachedDiagnostics(StringRef Buffer,
                                         SmallVectorImpl<uint8_t> &Storage) {
   if (!compression::zstd::isAvailable() && !compression::zlib::isAvailable())
     return Buffer;
@@ -725,7 +725,7 @@ Error CachedDiagnosticSerializer::deserializeCachedDiagnostics(
     StringRef Buffer) {
   SmallVector<uint8_t, 512> UncompressedBuffer;
   StringRef YamlContents;
-  if (Error E = decompressCachedDiagonstics(Buffer, UncompressedBuffer)
+  if (Error E = decompressCachedDiagnostics(Buffer, UncompressedBuffer)
                     .moveInto(YamlContents))
     return E;
 
