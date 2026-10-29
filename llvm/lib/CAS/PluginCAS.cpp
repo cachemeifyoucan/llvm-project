@@ -10,10 +10,6 @@
 /// Implements \c ObjectStore and \c ActionCache on top of a dynamically loaded
 /// plugin that provides the C API in \c "llvm-c/CAS/PluginAPI_functions.h".
 ///
-/// The asynchronous entry points of the plugin API are not called yet; they
-/// will be wired up once \c ObjectStore and \c ActionCache grow asynchronous
-/// interfaces.
-///
 //===----------------------------------------------------------------------===//
 
 #include "PluginAPI.h"
@@ -155,7 +151,9 @@ Expected<std::shared_ptr<PluginCASContext>> PluginCASContext::create(
 
 namespace {
 
-class PluginObjectStore : public ObjectStore {
+class PluginObjectStore
+    : public ObjectStore,
+      public std::enable_shared_from_this<PluginObjectStore> {
 public:
   Expected<CASID> parseID(StringRef ID) final;
   Expected<ObjectRef> store(ArrayRef<ObjectRef> Refs,
@@ -166,6 +164,10 @@ public:
   std::optional<ObjectRef> getReference(const CASID &ID) const final;
   Expected<bool> isMaterialized(ObjectRef Ref) const final;
   Expected<std::optional<ObjectHandle>> loadIfExists(ObjectRef Ref) final;
+  void loadIfExistsAsync(
+      ObjectRef Ref,
+      unique_function<void(Expected<std::optional<ObjectHandle>>)> Callback,
+      std::unique_ptr<Cancellable> *CancelObj) final;
   uint64_t getDataSize(ObjectHandle Node) const final;
   Error forEachRef(ObjectHandle Node,
                    function_ref<Error(ObjectRef)> Callback) const final;
@@ -195,6 +197,19 @@ public:
   }
 
   std::shared_ptr<PluginCASContext> Ctx;
+};
+
+class PluginCancellable final : public Cancellable {
+  std::shared_ptr<PluginCASContext> Ctx;
+  llcas_cancellable_t cancel_tok;
+
+public:
+  PluginCancellable(std::shared_ptr<PluginCASContext> Ctx,
+                    llcas_cancellable_t cancel_tok)
+      : Ctx(std::move(Ctx)), cancel_tok(cancel_tok) {}
+
+  ~PluginCancellable() { Ctx->Functions.cancellable_dispose(cancel_tok); }
+  void cancel() override { Ctx->Functions.cancellable_cancel(cancel_tok); }
 };
 
 } // anonymous namespace
@@ -332,6 +347,53 @@ PluginObjectStore::loadIfExists(ObjectRef Ref) {
     return Ctx->errorAndDispose(c_err);
   }
   llvm_unreachable("unknown llcas_lookup_result_t value");
+}
+
+void PluginObjectStore::loadIfExistsAsync(
+    ObjectRef Ref,
+    unique_function<void(Expected<std::optional<ObjectHandle>>)> Callback,
+    std::unique_ptr<Cancellable> *CancelObj) {
+  llcas_objectid_t c_id{Ref.getInternalRef(*this)};
+
+  struct LoadObjCtx {
+    std::shared_ptr<PluginObjectStore> CAS;
+    unique_function<void(Expected<std::optional<ObjectHandle>>)> Callback;
+
+    LoadObjCtx(
+        std::shared_ptr<PluginObjectStore> CAS,
+        unique_function<void(Expected<std::optional<ObjectHandle>>)> Callback)
+        : CAS(std::move(CAS)), Callback(std::move(Callback)) {}
+  };
+  auto LoadObjCB = [](void *c_ctx, llcas_lookup_result_t c_result,
+                      llcas_loaded_object_t c_obj, char *c_err) {
+    auto getObjAndDispose =
+        [&](LoadObjCtx *Ctx) -> Expected<std::optional<ObjectHandle>> {
+      llvm::scope_exit _([Ctx]() { delete Ctx; });
+      switch (c_result) {
+      case LLCAS_LOOKUP_RESULT_SUCCESS:
+        return Ctx->CAS->makeObjectHandle(c_obj.opaque);
+      case LLCAS_LOOKUP_RESULT_NOTFOUND:
+        return std::nullopt;
+      case LLCAS_LOOKUP_RESULT_ERROR:
+        return Ctx->CAS->Ctx->errorAndDispose(c_err);
+      }
+    };
+
+    LoadObjCtx *Ctx = static_cast<LoadObjCtx *>(c_ctx);
+    auto Callback = std::move(Ctx->Callback);
+    Callback(getObjAndDispose(Ctx));
+  };
+
+  LoadObjCtx *CallCtx = new LoadObjCtx(shared_from_this(), std::move(Callback));
+  if (CancelObj && Ctx->Functions.cancellable_cancel) {
+    llcas_cancellable_t cancel_tok = nullptr;
+    Ctx->Functions.cas_load_object_async(Ctx->c_cas, c_id, CallCtx, LoadObjCB,
+                                         &cancel_tok);
+    *CancelObj = std::make_unique<PluginCancellable>(Ctx, cancel_tok);
+  } else {
+    Ctx->Functions.cas_load_object_async(Ctx->c_cas, c_id, CallCtx, LoadObjCB,
+                                         nullptr);
+  }
 }
 
 namespace {
@@ -503,9 +565,17 @@ class PluginActionCache : public ActionCache {
 public:
   Expected<std::optional<CASID>> getImpl(ArrayRef<uint8_t> ResolvedKey,
                                          bool CanBeDistributed) const final;
+  void
+  getImplAsync(ArrayRef<uint8_t> ResolvedKey, bool CanBeDistributed,
+               unique_function<void(Expected<std::optional<CASID>>)> Callback,
+               std::unique_ptr<Cancellable> *CancelObj) const final;
 
   Error putImpl(ArrayRef<uint8_t> ResolvedKey, const CASID &Result,
                 bool CanBeDistributed) final;
+  void putImplAsync(ArrayRef<uint8_t> ResolvedKey, const CASID &Result,
+                    bool CanBeDistributed,
+                    unique_function<void(Error)> Callback,
+                    std::unique_ptr<Cancellable> *CancelObj) final;
 
   PluginActionCache(std::shared_ptr<PluginCASContext>);
 
@@ -539,6 +609,52 @@ PluginActionCache::getImpl(ArrayRef<uint8_t> ResolvedKey,
   llvm_unreachable("unknown llcas_lookup_result_t value");
 }
 
+void PluginActionCache::getImplAsync(
+    ArrayRef<uint8_t> ResolvedKey, bool CanBeDistributed,
+    unique_function<void(Expected<std::optional<CASID>>)> Callback,
+    std::unique_ptr<Cancellable> *CancelObj) const {
+
+  struct CacheGetCtx {
+    std::shared_ptr<PluginCASContext> CASCtx;
+    unique_function<void(Expected<std::optional<CASID>>)> Callback;
+  };
+  auto CacheGetCB = [](void *c_ctx, llcas_lookup_result_t c_result,
+                       llcas_objectid_t c_value, char *c_err) {
+    auto getValueAndDispose =
+        [&](CacheGetCtx *Ctx) -> Expected<std::optional<CASID>> {
+      llvm::scope_exit _([Ctx]() { delete Ctx; });
+      switch (c_result) {
+      case LLCAS_LOOKUP_RESULT_SUCCESS: {
+        llcas_digest_t c_digest = Ctx->CASCtx->Functions.objectid_get_digest(
+            Ctx->CASCtx->c_cas, c_value);
+        return CASID::create(Ctx->CASCtx.get(), toStringRef(c_digest));
+      }
+      case LLCAS_LOOKUP_RESULT_NOTFOUND:
+        return std::nullopt;
+      case LLCAS_LOOKUP_RESULT_ERROR:
+        return Ctx->CASCtx->errorAndDispose(c_err);
+      }
+    };
+
+    CacheGetCtx *Ctx = static_cast<CacheGetCtx *>(c_ctx);
+    auto Callback = std::move(Ctx->Callback);
+    Callback(getValueAndDispose(Ctx));
+  };
+
+  CacheGetCtx *CallCtx = new CacheGetCtx{this->Ctx, std::move(Callback)};
+  llcas_digest_t c_digest{ResolvedKey.data(), ResolvedKey.size()};
+  if (CancelObj && Ctx->Functions.cancellable_cancel) {
+    llcas_cancellable_t cancel_tok = nullptr;
+    Ctx->Functions.actioncache_get_for_digest_async(Ctx->c_cas, c_digest,
+                                                    CanBeDistributed, CallCtx,
+                                                    CacheGetCB, &cancel_tok);
+    *CancelObj = std::make_unique<PluginCancellable>(Ctx, cancel_tok);
+  } else {
+    Ctx->Functions.actioncache_get_for_digest_async(
+        Ctx->c_cas, c_digest, CanBeDistributed, CallCtx, CacheGetCB, nullptr);
+  }
+}
+
 Error PluginActionCache::putImpl(ArrayRef<uint8_t> ResolvedKey,
                                  const CASID &Result, bool CanBeDistributed) {
   ArrayRef<uint8_t> Hash = Result.getHash();
@@ -555,6 +671,50 @@ Error PluginActionCache::putImpl(ArrayRef<uint8_t> ResolvedKey,
     return Ctx->errorAndDispose(c_err);
 
   return Error::success();
+}
+
+void PluginActionCache::putImplAsync(ArrayRef<uint8_t> ResolvedKey,
+                                     const CASID &Result, bool CanBeDistributed,
+                                     unique_function<void(Error)> Callback,
+                                     std::unique_ptr<Cancellable> *CancelObj) {
+  ArrayRef<uint8_t> Hash = Result.getHash();
+  llcas_objectid_t c_value;
+  char *c_err = nullptr;
+  if (Ctx->Functions.cas_get_objectid(Ctx->c_cas,
+                                      llcas_digest_t{Hash.data(), Hash.size()},
+                                      &c_value, &c_err))
+    return Callback(Ctx->errorAndDispose(c_err));
+
+  struct CachePutCtx {
+    std::shared_ptr<PluginCASContext> CASCtx;
+    unique_function<void(Error)> Callback;
+  };
+  auto CachePutCB = [](void *c_ctx, bool failed, char *c_err) {
+    auto checkForErrorAndDispose = [&](CachePutCtx *Ctx) -> Error {
+      llvm::scope_exit _([Ctx]() { delete Ctx; });
+      if (failed)
+        return Ctx->CASCtx->errorAndDispose(c_err);
+      return Error::success();
+    };
+
+    CachePutCtx *Ctx = static_cast<CachePutCtx *>(c_ctx);
+    auto Callback = std::move(Ctx->Callback);
+    Callback(checkForErrorAndDispose(Ctx));
+  };
+
+  CachePutCtx *CallCtx = new CachePutCtx{this->Ctx, std::move(Callback)};
+  llcas_digest_t c_digest{ResolvedKey.data(), ResolvedKey.size()};
+  if (CancelObj && Ctx->Functions.cancellable_cancel) {
+    llcas_cancellable_t cancel_tok = nullptr;
+    Ctx->Functions.actioncache_put_for_digest_async(
+        Ctx->c_cas, c_digest, c_value, CanBeDistributed, CallCtx, CachePutCB,
+        &cancel_tok);
+    *CancelObj = std::make_unique<PluginCancellable>(Ctx, cancel_tok);
+  } else {
+    Ctx->Functions.actioncache_put_for_digest_async(
+        Ctx->c_cas, c_digest, c_value, CanBeDistributed, CallCtx, CachePutCB,
+        nullptr);
+  }
 }
 
 PluginActionCache::PluginActionCache(std::shared_ptr<PluginCASContext> CASCtx)

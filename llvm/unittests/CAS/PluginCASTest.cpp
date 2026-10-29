@@ -17,6 +17,7 @@
 #include "llvm/CAS/ActionCache.h"
 #include "llvm/CAS/CASConfiguration.h"
 #include "llvm/CAS/ObjectStore.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Testing/Support/Error.h"
@@ -289,6 +290,114 @@ TEST(PluginCASTest, CASConfigurationOnDiskPath) {
   ASSERT_THAT_ERROR(DBs->first->isMaterialized(*Ref).moveInto(IsMaterialized),
                     Succeeded());
   EXPECT_TRUE(IsMaterialized);
+}
+
+TEST(PluginCASTest, asyncDownloadAndCancel) {
+  unittest::TempDir Temp("plugin-cas", /*Unique=*/true);
+  std::string UpDir(Temp.path("up"));
+  std::string DownDir(Temp.path("down"));
+  std::pair<std::string, std::string> PluginOpts[] = {
+      {"upstream-path", std::string(UpDir)}, {"no-logging", "true"}};
+  using CASDatabases =
+      std::pair<std::shared_ptr<ObjectStore>, std::shared_ptr<ActionCache>>;
+  auto OpenDBs = [&]() -> CASDatabases {
+    std::optional<CASDatabases> DBs;
+    EXPECT_THAT_ERROR(
+        createPluginCASDatabases(getCASPluginPath(), DownDir, PluginOpts)
+            .moveInto(DBs),
+        Succeeded());
+    return std::move(*DBs);
+  };
+  auto GetAsync = [](ActionCache &AC, const CASID &Key,
+                     std::unique_ptr<Cancellable> *CancelObj) {
+    std::promise<AsyncCASIDValue> Promise;
+    auto Future = Promise.get_future();
+    AC.getAsync(
+        Key, /*CanBeDistributed=*/true,
+        [Promise =
+             std::move(Promise)](Expected<std::optional<CASID>> Value) mutable {
+          Promise.set_value(std::move(Value));
+        },
+        CancelObj);
+    return Future;
+  };
+  auto LoadAsync = [](ObjectStore &CAS, ObjectRef Ref,
+                      std::unique_ptr<Cancellable> *CancelObj) {
+    std::promise<AsyncProxyValue> Promise;
+    auto Future = Promise.get_future();
+    CAS.getProxyAsync(
+        Ref,
+        [Promise = std::move(Promise)](
+            Expected<std::optional<ObjectProxy>> Obj) mutable {
+          Promise.set_value(std::move(Obj));
+        },
+        CancelObj);
+    return Future;
+  };
+
+  // Populate the "upstream" CAS. A CASID refers to the CAS that created it,
+  // so keep the IDs as strings across re-opening the CAS.
+  std::string KeyStr, ValueStr;
+  {
+    auto [CAS, AC] = OpenDBs();
+    std::optional<CASID> Key, Value;
+    ASSERT_THAT_ERROR(CAS->createProxy({}, "key").moveInto(Key), Succeeded());
+    ASSERT_THAT_ERROR(CAS->createProxy({}, "value").moveInto(Value),
+                      Succeeded());
+    ASSERT_THAT_ERROR(
+        AC->putFuture(*Key, *Value, /*CanBeDistributed=*/true).get().take(),
+        Succeeded());
+    KeyStr = Key->toString();
+    ValueStr = Value->toString();
+  }
+
+  // Download the result and the object asynchronously from upstream.
+  sys::fs::remove_directories(DownDir);
+  {
+    auto [CAS, AC] = OpenDBs();
+    CASID Key = cantFail(CAS->parseID(KeyStr));
+    CASID Value = cantFail(CAS->parseID(ValueStr));
+    std::optional<CASID> Result;
+    ASSERT_THAT_ERROR(GetAsync(*AC, Key, nullptr).get().take().moveInto(Result),
+                      Succeeded());
+    ASSERT_TRUE(Result);
+    EXPECT_EQ(*Result, Value);
+
+    std::optional<ObjectRef> Ref = CAS->getReference(Value);
+    ASSERT_TRUE(Ref);
+    std::optional<ObjectProxy> Obj;
+    ASSERT_THAT_ERROR(LoadAsync(*CAS, *Ref, nullptr).get().take().moveInto(Obj),
+                      Succeeded());
+    ASSERT_TRUE(Obj);
+    EXPECT_EQ(Obj->getData(), "value");
+  }
+
+#if LLVM_ENABLE_THREADS
+  // Cancelled requests report the result as missing.
+  sys::fs::remove_directories(DownDir);
+  {
+    auto [CAS, AC] = OpenDBs();
+    CASID Key = cantFail(CAS->parseID(KeyStr));
+    CASID Value = cantFail(CAS->parseID(ValueStr));
+    std::unique_ptr<Cancellable> CancelGet;
+    auto GetFuture = GetAsync(*AC, Key, &CancelGet);
+    ASSERT_TRUE(CancelGet);
+    CancelGet->cancel();
+    std::optional<CASID> Result;
+    ASSERT_THAT_ERROR(GetFuture.get().take().moveInto(Result), Succeeded());
+    EXPECT_FALSE(Result);
+
+    std::optional<ObjectRef> Ref = CAS->getReference(Value);
+    ASSERT_TRUE(Ref);
+    std::unique_ptr<Cancellable> CancelLoad;
+    auto LoadFuture = LoadAsync(*CAS, *Ref, &CancelLoad);
+    ASSERT_TRUE(CancelLoad);
+    CancelLoad->cancel();
+    std::optional<ObjectProxy> Obj;
+    ASSERT_THAT_ERROR(LoadFuture.get().take().moveInto(Obj), Succeeded());
+    EXPECT_FALSE(Obj);
+  }
+#endif
 }
 
 #endif /* !LLVM_HWADDRESS_SANITIZER_BUILD */
