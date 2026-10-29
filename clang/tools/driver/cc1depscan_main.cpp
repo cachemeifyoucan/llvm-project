@@ -567,9 +567,28 @@ void reportError(const llvm::Twine &Message) {
   ExitOnErr(llvm::createStringError(llvm::inconvertibleErrorCode(), Message));
 }
 
+/// The socket path of the running server, removed by the signal handlers.
+std::atomic<const char *> SocketPathToRemoveOnSignal = nullptr;
+
+/// Remove the socket file of the running server, if any. This is called from
+/// signal handlers, so it only does async-signal-safe operations. The pidfile
+/// lock and the file descriptors are released when the process exits, but the
+/// socket file would be left behind and prevent a new server from binding to
+/// the same path.
+void removeSocketOnSignal() {
+  if (const char *Path = SocketPathToRemoveOnSignal.exchange(nullptr)) {
+#ifdef _WIN32
+    ::_unlink(Path);
+#else
+    ::unlink(Path);
+#endif
+  }
+}
+
 struct ScanServer {
   const char *Argv0 = nullptr;
   SmallString<128> BasePath;
+  SmallString<128> SocketPath;
   CASOptions CASOpts;
   int PidFD = -1;
   /// \p std::nullopt means it runs indefinitely.
@@ -586,6 +605,7 @@ struct ScanServer {
   /// jobs to finish.
   void shutdown() {
     ShutDown.store(true);
+    SocketPathToRemoveOnSignal.store(nullptr);
     // Clean up the pidfile when we're done.
     if (PidFD != -1) {
       // Unlock pidfile first so another daemon can spin up when it can't find
@@ -638,7 +658,7 @@ void ScanServer::start(bool Exclusive, ArrayRef<const char *> CASArgs) {
   unsigned MaxBacklog =
       llvm::hardware_concurrency().compute_thread_count() * 16;
 
-  SmallString<128> SocketPath = BasePath;
+  SocketPath = BasePath;
   SocketPath.append(".sock");
 
   // Open the socket and start listening.
@@ -648,6 +668,7 @@ void ScanServer::start(bool Exclusive, ArrayRef<const char *> CASArgs) {
     reportError("cannot create listener: " +
                 llvm::toString(Socket.takeError()));
   Listener = std::make_unique<llvm::ListeningSocket>(std::move(*Socket));
+  SocketPathToRemoveOnSignal.store(SocketPath.c_str());
 }
 
 int ScanServer::listen() {
@@ -970,17 +991,12 @@ int cc1depscand_main(ArrayRef<const char *> Argv, const char *Argv0,
 
   Server.TimeoutSeconds = LongRunning ? 120 : 15;
 
-  // Setup signal handlers for graceful shutdown (cross-platform).
-  llvm::sys::AddSignalHandler(
-      [](void *Cookie) {
-        auto *Srv = static_cast<ScanServer *>(Cookie);
-        Srv->shutdown();
-      },
-      &Server);
-
+  // Remove the socket file when the daemon crashes or is interrupted, so a new
+  // daemon can be started on the same path. The handlers run in signal
+  // context and must only do async-signal-safe work.
+  llvm::sys::AddSignalHandler([](void *) { removeSocketOnSignal(); }, nullptr);
   llvm::sys::SetInterruptFunction([]() {
-    // Note: This handler is called on interrupt (Ctrl+C).
-    // Cannot call non-reentrant functions here, so just exit immediately.
+    removeSocketOnSignal();
     std::_Exit(0);
   });
 
