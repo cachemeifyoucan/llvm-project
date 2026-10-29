@@ -797,7 +797,8 @@ public:
   void createPCHExternalASTSource(
       StringRef Path, DisableValidationForModuleKind DisableValidation,
       bool AllowPCHWithCompilerErrors, void *DeserializationListener,
-      bool OwnDeserializationListener);
+      bool OwnDeserializationListener,
+      std::unique_ptr<llvm::MemoryBuffer> PCHBuffer = nullptr);
 
   /// Create an external AST source to read a PCH file.
   ///
@@ -811,7 +812,8 @@ public:
       ArrayRef<std::shared_ptr<ModuleFileExtension>> Extensions,
       ArrayRef<std::shared_ptr<DependencyCollector>> DependencyCollectors,
       void *DeserializationListener, bool OwnDeserializationListener,
-      bool Preamble, bool UseGlobalModuleIndex);
+      bool Preamble, bool UseGlobalModuleIndex,
+      std::unique_ptr<llvm::MemoryBuffer> PCHBuffer = nullptr);
 
   /// Create a code completion consumer using the invocation; note that this
   /// will cause the source manager to truncate the input source file at the
@@ -905,6 +907,9 @@ public:
                                       DiagnosticsEngine &Diags,
                                       FileManager &FileMgr,
                                       SourceManager &SourceMgr);
+
+  /// Initialize inputs from CAS.
+  void initializeDelayedInputFileFromCAS();
 
   /// @}
 

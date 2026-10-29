@@ -13,6 +13,7 @@
 #include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/CommentOptions.h"
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticCAS.h"
 #include "clang/Basic/DiagnosticDriver.h"
 #include "clang/Basic/DiagnosticFrontend.h"
 #include "clang/Basic/DiagnosticOptions.h"
@@ -26,6 +27,7 @@
 #include "clang/Basic/TargetOptions.h"
 #include "clang/Basic/Version.h"
 #include "clang/Basic/XRayInstr.h"
+#include "clang/CAS/IncludeTree.h"
 #include "clang/Config/config.h"
 #include "clang/Frontend/CommandLineSourceLoc.h"
 #include "clang/Frontend/DependencyOutputOptions.h"
@@ -50,6 +52,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/CAS/ObjectStore.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Frontend/Debug/Options.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -1500,6 +1503,79 @@ static std::string serializeXRayInstrumentationBundle(const XRayInstrSet &S) {
   llvm::raw_string_ostream OS(Buffer);
   llvm::interleave(BundleParts, OS, [&OS](StringRef Part) { OS << Part; }, ",");
   return Buffer;
+}
+
+static IntrusiveRefCntPtr<llvm::vfs::FileSystem>
+createBaseFS(const FileSystemOptions &FSOpts, const FrontendOptions &FEOpts,
+             const CASOptions &CASOpts, DiagnosticsEngine &Diags,
+             IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS,
+             std::shared_ptr<llvm::cas::ObjectStore> CAS) {
+  if (FEOpts.CASIncludeTreeID.empty())
+    return BaseFS;
+
+  // Helper for creating a valid (but empty) FS if an error is encountered.
+  auto makeEmptyFS = [] {
+    class EmptyFS : public llvm::RTTIExtends<EmptyFS, llvm::vfs::FileSystem> {
+      llvm::ErrorOr<llvm::vfs::Status> status(const Twine &Path) final {
+        return llvm::errc::no_such_file_or_directory;
+      }
+      llvm::ErrorOr<std::unique_ptr<llvm::vfs::File>>
+      openFileForRead(const Twine &Path) final {
+        return llvm::errc::no_such_file_or_directory;
+      }
+      llvm::vfs::directory_iterator dir_begin(const Twine &Dir,
+                                              std::error_code &EC) final {
+        EC = llvm::errc::no_such_file_or_directory;
+        return {};
+      }
+      std::error_code setCurrentWorkingDirectory(const Twine &Path) final {
+        return llvm::errc::no_such_file_or_directory;
+      }
+      llvm::ErrorOr<std::string> getCurrentWorkingDirectory() const final {
+        return llvm::errc::no_such_file_or_directory;
+      }
+    };
+    return std::make_unique<EmptyFS>();
+  };
+
+  // CAS couldn't be created. The error was already reported to Diags.
+  assert((CAS || Diags.hasErrorOccurred()) &&
+         "CAS is missing but not diagnosed");
+  if (!CAS)
+    return makeEmptyFS();
+
+  Expected<llvm::cas::CASID> RootID = CAS->parseID(FEOpts.CASIncludeTreeID);
+  if (!RootID) {
+    llvm::consumeError(RootID.takeError());
+    Diags.Report(diag::err_cas_cannot_parse_root_id) << FEOpts.CASIncludeTreeID;
+    return makeEmptyFS();
+  }
+
+  auto makeIncludeTreeFS = [&](std::shared_ptr<llvm::cas::ObjectStore> CAS,
+                               llvm::cas::CASID &ID)
+      -> Expected<IntrusiveRefCntPtr<llvm::vfs::FileSystem>> {
+    std::optional<llvm::cas::ObjectRef> Ref = CAS->getReference(ID);
+    if (!Ref)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "include-tree CASID does not exist");
+    auto Root = cas::IncludeTreeRoot::get(*CAS, *Ref);
+    if (!Root)
+      return Root.takeError();
+    auto FileList = Root->getFileList();
+    if (!FileList)
+      return FileList.takeError();
+
+    return cas::createIncludeTreeFileSystem(*FileList);
+  };
+
+  auto ExpectedFS = makeIncludeTreeFS(std::move(CAS), *RootID);
+  if (!ExpectedFS) {
+    Diags.Report(diag::err_cas_filesystem_cannot_be_initialized)
+        << FEOpts.CASIncludeTreeID << llvm::toString(ExpectedFS.takeError());
+    return makeEmptyFS();
+  }
+
+  return *ExpectedFS;
 }
 
 void CompilerInvocation::setDefaultPointerAuthOptions(
@@ -3111,11 +3187,13 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
 
   // OPT_INPUT has a unique class, generate it directly.
   for (const auto &Input : Opts.Inputs)
-    Consumer(Input.getFile());
+    if (!Input.isIncludeTree())
+      Consumer(Input.getFile());
 }
 
 static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
-                              DiagnosticsEngine &Diags, bool &IsHeaderFile) {
+                              CASOptions &CASOpts, DiagnosticsEngine &Diags,
+                              bool &IsHeaderFile) {
   unsigned NumErrorsBefore = Diags.getNumErrors();
 
   FrontendOptions &FrontendOpts = Opts;
@@ -3358,6 +3436,21 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
   // '-' is the default input if none is given.
   std::vector<std::string> Inputs = Args.getAllArgValues(OPT_INPUT);
   Opts.Inputs.clear();
+
+  if (!Opts.CASIncludeTreeID.empty()) {
+    if (!Inputs.empty())
+      Diags.Report(diag::err_drv_inputs_and_cas_input);
+
+    if (DashX.isUnknown()) {
+      Diags.Report(diag::err_drv_include_tree_miss_input_kind);
+      DashX = Language::C; // set to default C to avoid crashing.
+    }
+
+    // Quit early as include tree will delay input initialization.
+    Opts.DashX = DashX;
+    return Diags.getNumErrors() == NumErrorsBefore;
+  }
+
   if (Inputs.empty())
     Inputs.push_back("-");
 
@@ -3669,6 +3762,11 @@ static void ParseAPINotesArgs(APINotesOptions &Opts, ArgList &Args,
   }
   for (const Arg *A : Args.filtered(OPT_iapinotes_modules))
     Opts.ModuleSearchPaths.push_back(A->getValue());
+
+  if (Args.hasFlag(OPT_fapinotes, OPT_fno_apinotes, false) &&
+      Args.hasArg(OPT_fcas_include_tree))
+    diags.Report(diag::err_drv_incompatible_option_include_tree)
+        << "-fapinotes";
 }
 
 static void GeneratePointerAuthArgs(const LangOptions &Opts,
@@ -5223,7 +5321,8 @@ bool CompilerInvocation::CreateFromArgsImpl(
   ParseAnalyzerArgs(Res.getAnalyzerOpts(), Args, Diags);
   ParseSSAFArgs(Res.getSSAFOpts(), Args, Diags);
   ParseDiagnosticArgs(Res.getDiagnosticOpts(), Args, &Diags);
-  ParseFrontendArgs(Res.getFrontendOpts(), Args, Diags, LangOpts.IsHeaderFile);
+  ParseFrontendArgs(Res.getFrontendOpts(), Args, Res.getCASOpts(), Diags,
+                    LangOpts.IsHeaderFile);
   // FIXME: We shouldn't have to pass the DashX option around here
   InputKind DashX = Res.getFrontendOpts().DashX;
   ParseTargetArgs(Res.getTargetOpts(), Args, Diags);
@@ -5654,18 +5753,22 @@ void CompilerInvocation::clearImplicitModuleBuildOptions() {
 }
 
 IntrusiveRefCntPtr<llvm::vfs::FileSystem>
-clang::createVFSFromCompilerInvocation(const CompilerInvocation &CI,
-                                       DiagnosticsEngine &Diags) {
-  return createVFSFromCompilerInvocation(CI, Diags,
-                                         llvm::vfs::getRealFileSystem());
+clang::createVFSFromCompilerInvocation(
+    const CompilerInvocation &CI, DiagnosticsEngine &Diags,
+    std::shared_ptr<llvm::cas::ObjectStore> CAS) {
+  return createVFSFromCompilerInvocation(
+      CI, Diags, llvm::vfs::getRealFileSystem(), std::move(CAS));
 }
 
 IntrusiveRefCntPtr<llvm::vfs::FileSystem>
 clang::createVFSFromCompilerInvocation(
     const CompilerInvocation &CI, DiagnosticsEngine &Diags,
-    IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS) {
-  return createVFSFromOverlayFiles(CI.getHeaderSearchOpts().VFSOverlayFiles,
-                                   Diags, std::move(BaseFS));
+    IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS,
+    std::shared_ptr<llvm::cas::ObjectStore> CAS) {
+  return createVFSFromOverlayFiles(
+      CI.getHeaderSearchOpts().VFSOverlayFiles, Diags,
+      createBaseFS(CI.getFileSystemOpts(), CI.getFrontendOpts(),
+                   CI.getCASOpts(), Diags, std::move(BaseFS), std::move(CAS)));
 }
 
 IntrusiveRefCntPtr<llvm::vfs::FileSystem> clang::createVFSFromOverlayFiles(

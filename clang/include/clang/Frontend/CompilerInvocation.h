@@ -39,6 +39,11 @@ class ArgList;
 
 } // namespace opt
 
+namespace cas {
+
+class ObjectStore;
+}
+
 } // namespace llvm
 
 namespace clang {
@@ -504,11 +509,13 @@ CompilerInvocation::operator=(CowCompilerInvocation &&X) {
 
 IntrusiveRefCntPtr<llvm::vfs::FileSystem>
 createVFSFromCompilerInvocation(const CompilerInvocation &CI,
-                                DiagnosticsEngine &Diags);
+                                DiagnosticsEngine &Diags,
+                                std::shared_ptr<llvm::cas::ObjectStore> CAS);
 
 IntrusiveRefCntPtr<llvm::vfs::FileSystem> createVFSFromCompilerInvocation(
     const CompilerInvocation &CI, DiagnosticsEngine &Diags,
-    IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS);
+    IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS,
+    std::shared_ptr<llvm::cas::ObjectStore> CAS);
 
 IntrusiveRefCntPtr<llvm::vfs::FileSystem>
 createVFSFromOverlayFiles(ArrayRef<std::string> VFSOverlayFiles,

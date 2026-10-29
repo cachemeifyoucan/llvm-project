@@ -9350,6 +9350,11 @@ def fcas_plugin_option : Separate<["-"], "fcas-plugin-option">,
     HelpText<"Option to pass to the CAS plugin.">,
     MarshallingInfoStringPairVector<CASOpts<"PluginOptions">>;
 
+def fcas_include_tree : Separate<["-"], "fcas-include-tree">,
+    Group<f_Group>, MetaVarName<"<tree>">,
+    HelpText<"Configure the frontend to use a CAS include tree.">,
+    MarshallingInfoString<FrontendOpts<"CASIncludeTreeID">>;
+
 } // let Visibility = [CC1Option]
 
 def sycl_std_EQ : Joined<["-"], "sycl-std=">, Group<sycl_Group>,

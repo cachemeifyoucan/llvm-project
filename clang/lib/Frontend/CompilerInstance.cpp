@@ -21,6 +21,7 @@
 #include "clang/Basic/Stack.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/Version.h"
+#include "clang/CAS/IncludeTree.h"
 #include "clang/Config/config.h"
 #include "clang/Frontend/ChainedDiagnosticConsumer.h"
 #include "clang/Frontend/FrontendAction.h"
@@ -307,8 +308,11 @@ void CompilerInstance::createVirtualFileSystem(
   DiagnosticsEngine Diags(DiagnosticIDs::create(), DiagOpts, DC,
                           ShouldOwnClient);
 
+  if (getFrontendOpts().needsCAS())
+    getOrCreateCASDatabases(&Diags);
+
   VFS = createVFSFromCompilerInvocation(getInvocation(), Diags,
-                                        std::move(BaseFS));
+                                        std::move(BaseFS), CAS);
   // FIXME: Should this go into createVFSFromCompilerInvocation?
   if (getFrontendOpts().ShowStats)
     VFS =
@@ -640,7 +644,8 @@ struct ReadModuleNames : ASTReaderListener {
 void CompilerInstance::createPCHExternalASTSource(
     StringRef Path, DisableValidationForModuleKind DisableValidation,
     bool AllowPCHWithCompilerErrors, void *DeserializationListener,
-    bool OwnDeserializationListener) {
+    bool OwnDeserializationListener,
+    std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
   bool Preamble = getPreprocessorOpts().PrecompiledPreambleBytes.first != 0;
   TheASTReader = createPCHExternalASTSource(
       Path, getHeaderSearchOpts().Sysroot, DisableValidation,
@@ -648,7 +653,7 @@ void CompilerInstance::createPCHExternalASTSource(
       getASTContext(), getPCHContainerReader(), getCodeGenOpts(),
       getFrontendOpts().ModuleFileExtensions, DependencyCollectors,
       DeserializationListener, OwnDeserializationListener, Preamble,
-      getFrontendOpts().UseGlobalModuleIndex);
+      getFrontendOpts().UseGlobalModuleIndex, std::move(PCHBuffer));
 }
 
 IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
@@ -660,7 +665,8 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
     ArrayRef<std::shared_ptr<ModuleFileExtension>> Extensions,
     ArrayRef<std::shared_ptr<DependencyCollector>> DependencyCollectors,
     void *DeserializationListener, bool OwnDeserializationListener,
-    bool Preamble, bool UseGlobalModuleIndex) {
+    bool Preamble, bool UseGlobalModuleIndex,
+    std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
   const HeaderSearchOptions &HSOpts =
       PP.getHeaderSearchInfo().getHeaderSearchOpts();
 
@@ -688,7 +694,16 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
   ASTReader::ListenerScope ReadModuleNamesListener(*Reader,
                                                    std::move(Listener));
 
-  switch (Reader->ReadAST(ModuleFileName::makeExplicit(Path),
+  ModuleFileName ModuleFilename = ModuleFileName::makeExplicit(Path);
+
+  if (PCHBuffer) {
+    off_t PCHBufferSize = PCHBuffer->getBufferSize();
+    Reader->getModuleManager().getModuleCache().getInMemoryModuleCache().addPCM(
+        Path, std::move(PCHBuffer), PCHBufferSize, /*ModTime=*/0);
+    ModuleFilename = ModuleFileName::makeInMemory(Path);
+  }
+
+  switch (Reader->ReadAST(ModuleFilename,
                           Preamble ? serialization::MK_Preamble
                                    : serialization::MK_PCH,
                           SourceLocation(), ASTReader::ARR_None)) {
@@ -922,6 +937,47 @@ std::unique_ptr<raw_pwrite_stream> CompilerInstance::createOutputFile(
   return nullptr;
 }
 
+void CompilerInstance::initializeDelayedInputFileFromCAS() {
+  auto &Opts = Invocation->getFrontendOpts();
+  // Return if no need to initialize or already initialized.
+  if (Opts.CASIncludeTreeID.empty() || !Opts.Inputs.empty())
+    return;
+
+  assert(hasDiagnostics() && "need diagnostics engine for CAS loading");
+
+  // If there is include tree, initialize the inputs from CAS.
+  auto reportError = [&](llvm::Error &&E) {
+    Diagnostics->Report(diag::err_fe_unable_to_load_include_tree)
+        << Opts.CASIncludeTreeID << llvm::toString(std::move(E));
+  };
+  auto &CAS = getOrCreateObjectStore();
+  if (!Opts.CASIncludeTreeID.empty()) {
+    auto ID = CAS.parseID(Opts.CASIncludeTreeID);
+    if (!ID)
+      return reportError(ID.takeError());
+    auto Object = CAS.getReference(*ID);
+    if (!Object)
+      return reportError(llvm::cas::ObjectStore::createUnknownObjectError(*ID));
+    auto Root = cas::IncludeTreeRoot::get(CAS, *Object);
+    if (!Root)
+      return reportError(Root.takeError());
+    auto MainTree = Root->getMainFileTree();
+    if (!MainTree)
+      return reportError(MainTree.takeError());
+    auto BaseFile = MainTree->getBaseFile();
+    if (!BaseFile)
+      return reportError(BaseFile.takeError());
+    auto FilenameBlob = BaseFile->getFilename();
+    if (!FilenameBlob)
+      return reportError(FilenameBlob.takeError());
+
+    auto InputFilename = FilenameBlob->getData();
+    Opts.Inputs.emplace_back(Root->getRef(), InputFilename, Opts.DashX,
+                             /*isSystem=*/false);
+    return;
+  }
+}
+
 Expected<std::unique_ptr<llvm::raw_pwrite_stream>>
 CompilerInstance::createOutputFileImpl(StringRef OutputPath, bool Binary,
                                        bool RemoveFileOnSignal,
@@ -1065,6 +1121,8 @@ bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
   // binary search later.
   llvm::sort(getCodeGenOpts().TocDataVarsUserSpecified);
   llvm::sort(getCodeGenOpts().NoTocDataVars);
+
+  initializeDelayedInputFileFromCAS();
 
   for (const FrontendInputFile &FIF : getFrontendOpts().Inputs) {
     // Reset the ID tables if we are reusing the SourceManager and parsing

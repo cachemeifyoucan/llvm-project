@@ -16,5 +16,10 @@ let Component = "CAS" in {
 def err_cas_cannot_be_initialized : Error<
   "CAS cannot be initialized from the specified '-fcas-*' options: %0">,
   DefaultFatal;
+def err_cas_cannot_parse_root_id
+    : Error<"CAS cannot parse root-id '%0' specified by '-fcas-*' options">,
+      DefaultFatal;
+def err_cas_filesystem_cannot_be_initialized : Error<
+  "CAS filesystem cannot be initialized from root-id '%0': %1">, DefaultFatal;
 
 } // let Component = "CAS" in

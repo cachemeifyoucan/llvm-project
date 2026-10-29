@@ -160,6 +160,11 @@ def err_fe_invalid_exception_model
 def err_fe_invalid_source_date_epoch : Error<
     "environment variable 'SOURCE_DATE_EPOCH' ('%0') must be a non-negative decimal integer <= %1">;
 
+def err_fe_unable_to_load_include_tree : Error<
+  "unable to load the CAS include-tree '%0': '%1'">;
+def err_unable_to_load_include_tree_node : Error<
+  "unable to load a node from the CAS include-tree: '%0'">;
+
 def err_fe_unable_to_load_basic_block_sections_file : Error<
     "unable to load basic block sections function list: '%0'">;
 

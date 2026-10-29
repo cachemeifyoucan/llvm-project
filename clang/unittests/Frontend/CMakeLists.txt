@@ -1,5 +1,6 @@
 add_clang_unittest(FrontendTests
   ASTUnitTest.cpp
+  CASIncludeTreeTest.cpp
   CompilerInvocationTest.cpp
   CompilerInstanceTest.cpp
   FixedPointString.cpp
@@ -16,6 +17,7 @@ add_clang_unittest(FrontendTests
   CLANG_LIBS
   clangAST
   clangBasic
+  clangCAS
   clangFrontend
   clangLex
   clangSema

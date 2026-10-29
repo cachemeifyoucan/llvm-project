@@ -15,6 +15,7 @@
 #include "clang/Sema/CodeCompleteOptions.h"
 #include "clang/Serialization/ModuleFileExtension.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/CAS/CASReference.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TimeProfiler.h"
@@ -236,6 +237,9 @@ class FrontendInputFile {
   /// that it outlives any users.
   std::optional<llvm::MemoryBufferRef> Buffer;
 
+  /// The input, if it comes from \p FrontendOptions::CASIncludeTreeID.
+  std::optional<cas::ObjectRef> IncludeTree;
+
   /// The kind of input, e.g., C source, AST file, LLVM IR.
   InputKind Kind;
 
@@ -251,6 +255,14 @@ public:
   FrontendInputFile(llvm::MemoryBufferRef Buffer, InputKind Kind,
                     bool IsSystem = false)
       : Buffer(Buffer), Kind(Kind), IsSystem(IsSystem) {}
+  FrontendInputFile(cas::ObjectRef Tree, StringRef File, InputKind Kind,
+                    bool IsSystem = false)
+      : File(File.str()), IncludeTree(std::move(Tree)), Kind(Kind),
+        IsSystem(IsSystem) {}
+  FrontendInputFile(cas::ObjectRef Tree, llvm::MemoryBufferRef Buffer,
+                    InputKind Kind, bool IsSystem = false)
+      : Buffer(Buffer), IncludeTree(std::move(Tree)), Kind(Kind),
+        IsSystem(IsSystem) {}
 
   InputKind getKind() const { return Kind; }
   bool isSystem() const { return IsSystem; }
@@ -258,6 +270,7 @@ public:
   bool isEmpty() const { return File.empty() && Buffer == std::nullopt; }
   bool isFile() const { return !isBuffer(); }
   bool isBuffer() const { return Buffer != std::nullopt; }
+  bool isIncludeTree() const { return IncludeTree.has_value(); }
   bool isPreprocessed() const { return Kind.isPreprocessed(); }
   bool isHeader() const { return Kind.isHeader(); }
   InputKind::HeaderUnitKind getHeaderUnitKind() const {
@@ -272,6 +285,11 @@ public:
   llvm::MemoryBufferRef getBuffer() const {
     assert(isBuffer());
     return *Buffer;
+  }
+
+  cas::ObjectRef getIncludeTree() const {
+    assert(isIncludeTree());
+    return *IncludeTree;
   }
 };
 
@@ -451,6 +469,11 @@ public:
 
   /// The input files and their types.
   SmallVector<FrontendInputFile, 0> Inputs;
+
+  /// Use the provided CAS include tree.
+  std::string CASIncludeTreeID;
+
+  bool needsCAS() const { return !CASIncludeTreeID.empty(); }
 
   /// When the input is a module map, the original module map file from which
   /// that map was inferred, if any (for umbrella modules).

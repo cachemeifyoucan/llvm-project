@@ -2584,6 +2584,17 @@ public:
     return ImportingCXXNamedModules;
   }
 
+private:
+  /// The include tree that is being built, if any.
+  /// See \c FrontendOptions::CASIncludeTreeID.
+  std::optional<std::string> CASIncludeTreeID;
+
+public:
+  std::optional<std::string> getCASIncludeTreeID() const {
+    return CASIncludeTreeID;
+  }
+  void setCASIncludeTreeID(std::string ID) { CASIncludeTreeID = std::move(ID); }
+
   /// Allocate a new MacroInfo object with the provided SourceLocation.
   MacroInfo *AllocateMacroInfo(SourceLocation L);
 

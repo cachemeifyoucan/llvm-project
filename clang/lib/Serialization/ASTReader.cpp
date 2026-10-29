@@ -3728,6 +3728,10 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       F.InputFileInfosLoaded.resize(NumInputs);
       F.NumUserInputFiles = NumUserInputs;
       break;
+
+    case CAS_INCLUDE_TREE_ID:
+      F.IncludeTreeID = Blob.str();
+      break;
     }
   }
 }
