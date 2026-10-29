@@ -29,6 +29,7 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/CAS/ActionCache.h"
+#include "llvm/CAS/BuiltinUnifiedCASDatabases.h"
 #include "llvm/CAS/CASProvidingFileSystem.h"
 #include "llvm/CAS/ObjectStore.h"
 #include "llvm/Option/ArgList.h"
@@ -773,6 +774,39 @@ struct ScanServer {
   }
 };
 
+std::optional<StringRef>
+findLLVMCasBinary(const char *Argv0, llvm::SmallVectorImpl<char> &Storage) {
+  using namespace llvm::sys;
+
+  std::string Path = fs::getMainExecutable(Argv0, (void *)cc1depscan_main);
+  Storage.assign(Path.begin(), Path.end());
+  path::remove_filename(Storage);
+#if defined(_WIN32)
+  path::append(Storage, "llvm-cas.exe");
+#else
+  path::append(Storage, "llvm-cas");
+#endif
+
+  StringRef PathStr(Storage.data(), Storage.size());
+  if (fs::exists(PathStr))
+    return PathStr;
+
+#if LLVM_ON_UNIX
+  // Look for a corresponding usr/local/bin/llvm-cas
+  PathStr = path::parent_path(PathStr);
+  if (path::filename(PathStr) != "bin")
+    return std::nullopt;
+  PathStr = path::parent_path(PathStr);
+  Storage.truncate(PathStr.size());
+  path::append(Storage, "local", "bin", "llvm-cas");
+  PathStr = StringRef{Storage.data(), Storage.size()};
+  if (fs::exists(PathStr))
+    return PathStr;
+#endif
+
+  return std::nullopt;
+}
+
 void ScanServer::start(bool Exclusive, ArrayRef<const char *> CASArgs) {
   // Parse CAS options and validate if needed.
   DiagnosticOptions DiagOpts;
@@ -786,6 +820,47 @@ void ScanServer::start(bool Exclusive, ArrayRef<const char *> CASArgs) {
   CASOpts.ensurePersistentCAS();
 
   auto BypassSandbox = llvm::sys::sandbox::scopedDisable();
+
+  static std::once_flag ValidateOnce;
+  std::call_once(ValidateOnce, [&] {
+    if (getenv("LLVM_CAS_DISABLE_VALIDATION"))
+      return;
+    if (CASOpts.CASPath.empty() || !CASOpts.PluginPath.empty())
+      return;
+    SmallString<64> LLVMCasStorage;
+    SmallString<64> CASPath;
+    if (auto Err = CASOpts.getResolvedCASPath(CASPath)) {
+      // Failure to resolve a cas path for validation is ignored, because any
+      // error will be reported when attempting to open the cas.
+      llvm::consumeError(std::move(Err));
+      return;
+    }
+    bool Forced = getenv("LLVM_CAS_FORCE_VALIDATION");
+    // If `llvm-cas` tool can be located, validate out-of-process. Otherwise do
+    // in-process validation.
+    if (auto Exec = findLLVMCasBinary(Argv0, LLVMCasStorage)) {
+      SmallVector<StringRef> Args{*Exec,          "--cas",
+                                  CASPath,        "--validate-if-needed",
+                                  "--check-hash", "--allow-recovery"};
+      if (Forced)
+        Args.push_back("--force");
+
+      int Result = llvm::sys::ExecuteAndWait(*Exec, Args, /*Env=*/std::nullopt,
+                                             /*Redirects*/ {},
+                                             /*SecondsToWait=*/120);
+      if (Result != 0)
+        reportError("cas validation failed");
+
+      return;
+    }
+    auto Result = llvm::cas::validateOnDiskUnifiedCASDatabasesIfNeeded(
+        CASPath, /*CheckHash=*/true, Forced);
+    if (Result)
+      return;
+
+    llvm::consumeError(Result.takeError());
+    ExitOnErr(llvm::cas::recoverOnDiskUnifiedCASDatabases(CASPath));
+  });
 
   // Check the pidfile.
   SmallString<128> PidPath;
