@@ -32,4 +32,5 @@
 #include "clang/Basic/DiagnosticRefactoringKinds.inc"
 #include "clang/Basic/DiagnosticInstallAPIKinds.inc"
 #include "clang/Basic/DiagnosticTrapKinds.inc"
+#include "clang/Basic/DiagnosticCASKinds.inc"
 // clang-format on
