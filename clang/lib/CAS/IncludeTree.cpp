@@ -18,6 +18,7 @@
 #include "llvm/CAS/ObjectStore.h"
 #include "llvm/Support/EndianStream.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
 #include <utility>
 
 using namespace clang;
@@ -414,6 +415,7 @@ llvm::Error IncludeTree::Node::print(llvm::raw_ostream &OS, unsigned Indent) {
   case NodeKind::Tree:
     return getIncludeTree().print(OS, Indent);
   }
+  llvm_unreachable("unhandled IncludeTree::NodeKind");
 }
 
 llvm::Error IncludeTreeRoot::print(llvm::raw_ostream &OS, unsigned Indent) {
