@@ -35,8 +35,7 @@ static void updateRelativePath(std::string &Path,
 
 void dependencies::configureInvocationForCaching(CowCompilerInvocation &CI,
                                                  CASOptions CASOpts,
-                                                 std::string InputID,
-                                                 std::string WorkingDir) {
+                                                 std::string InputID) {
   CI.getMutCASOpts() = std::move(CASOpts);
   auto &FrontendOpts = CI.getMutFrontendOpts();
   FrontendOpts.IncludeTimestamps = false;

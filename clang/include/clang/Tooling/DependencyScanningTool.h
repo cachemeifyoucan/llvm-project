@@ -21,12 +21,6 @@
 #include <string>
 #include <vector>
 
-namespace llvm {
-namespace cas {
-class ObjectProxy;
-} // namespace cas
-} // namespace llvm
-
 namespace clang {
 namespace cas {
 class IncludeTreeRoot;

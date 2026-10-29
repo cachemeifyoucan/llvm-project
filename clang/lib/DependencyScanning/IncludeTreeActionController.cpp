@@ -105,8 +105,6 @@ private:
   SmallVector<cas::IncludeTree::FileList::FileEntry> IncludedFiles;
   SmallVector<cas::ObjectRef> IncludedFileLists;
   std::optional<cas::ObjectRef> PredefinesBufferRef;
-  /// When the builder is created from an existing tree, the main include tree.
-  std::optional<cas::ObjectRef> MainIncludeTreeRef;
   SmallVector<FilePPState> IncludeStack;
   llvm::DenseMap<const FileEntry *, std::optional<cas::ObjectRef>>
       ObjectForFile;
@@ -232,9 +230,7 @@ bool IncludeTreeActionController::finalize(
     InputID = IncludeTreeResult->getID().toString();
   }
 
-  configureInvocationForCaching(NewInvocation, CASOpts, InputID,
-                                // FIXME: working dir?
-                                /*CASFSWorkingDir=*/"");
+  configureInvocationForCaching(NewInvocation, CASOpts, InputID);
   return true;
 }
 

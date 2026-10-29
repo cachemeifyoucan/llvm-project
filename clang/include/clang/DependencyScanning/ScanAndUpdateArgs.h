@@ -35,8 +35,7 @@ namespace dependencies {
 /// Apply CAS inputs for compilation caching to the given invocation, if
 /// enabled.
 void configureInvocationForCaching(CowCompilerInvocation &CI,
-                                   CASOptions CASOpts, std::string InputID,
-                                   std::string WorkingDir);
+                                   CASOptions CASOpts, std::string InputID);
 
 } // namespace dependencies
 } // end namespace clang
