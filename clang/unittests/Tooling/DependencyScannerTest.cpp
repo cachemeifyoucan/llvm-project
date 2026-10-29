@@ -367,8 +367,6 @@ TEST(DependencyScanner, NoNegativeCacheCAS) {
   std::shared_ptr<ActionCache> Cache = llvm::cas::createInMemoryActionCache();
   auto VFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
   VFS->setCurrentWorkingDirectory(CWD);
-  std::unique_ptr<llvm::vfs::FileSystem> CASFS =
-      llvm::cas::createCASProvidingFileSystem(DB, VFS);
 
   auto Sept = llvm::sys::path::get_separator();
   std::string HeaderPath =
