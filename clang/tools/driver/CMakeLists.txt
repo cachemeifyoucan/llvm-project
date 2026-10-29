@@ -45,6 +45,7 @@ add_clang_tool(clang
   cc1_main.cpp
   cc1as_main.cpp
   cc1gen_reproducer_main.cpp
+  cc1depscanProtocol.cpp
   cc1depscan_main.cpp
 
   DEPENDS

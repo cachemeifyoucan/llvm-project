@@ -5425,7 +5425,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &Job,
     D.Diag(diag::err_drv_clang_unsupported) << "C++ for IAMCU";
 
   {
-    const OptSpecifier DepScanOpts[] = {options::OPT_fdepscan_EQ};
+    const OptSpecifier DepScanOpts[] = {options::OPT_fdepscan_EQ,
+                                        options::OPT_fdepscan_daemon_EQ};
 
     // Handle depscan.
     if (Job.getKind() == Action::DepscanJobClass) {
