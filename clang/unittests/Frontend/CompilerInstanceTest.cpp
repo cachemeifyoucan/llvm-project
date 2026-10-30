@@ -176,6 +176,64 @@ TEST(CompilerInstance, CASDatabasesInvalidPath) {
             std::string::npos);
 }
 
+TEST(CompilerInstance, NoCASForPCHAndModulesWithoutCaching) {
+  llvm::unittest::TempDir Dir("no-cas-without-caching", /*Unique=*/true);
+  auto writeFile = [&](StringRef Name, StringRef Contents) {
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(Dir.path(Name), EC);
+    ASSERT_FALSE(EC);
+    OS << Contents;
+  };
+  writeFile("a.h", "int from_pch;\n");
+  writeFile("m.h", "int from_module;\n");
+  writeFile("module.modulemap", "module M { header \"m.h\" }\n");
+  writeFile("t.c", "int use = sizeof(from_pch);\n");
+  writeFile("u.c", "#include \"m.h\"\nint use = sizeof(from_module);\n");
+
+  // Run \p Action for the -cc1 arguments \p Args and check that it did not
+  // need a CAS.
+  auto run = [](ArrayRef<std::string> Args, FrontendAction &Action) {
+    std::vector<const char *> ArgPtrs;
+    for (const std::string &Arg : Args)
+      ArgPtrs.push_back(Arg.c_str());
+    auto Invocation = std::make_shared<CompilerInvocation>();
+    DiagnosticOptions DiagOpts;
+    auto *DiagsBuffer = new TextDiagnosticBuffer();
+    DiagnosticsEngine Diags(DiagnosticIDs::create(), DiagOpts, DiagsBuffer);
+    ASSERT_TRUE(
+        CompilerInvocation::CreateFromArgs(*Invocation, ArgPtrs, Diags));
+
+    CompilerInstance Instance(std::move(Invocation));
+    Instance.createVirtualFileSystem(llvm::vfs::getRealFileSystem());
+    Instance.createDiagnostics(DiagsBuffer, /*ShouldOwnClient=*/false);
+    EXPECT_TRUE(Instance.ExecuteAction(Action));
+    for (auto I = DiagsBuffer->err_begin(), E = DiagsBuffer->err_end(); I != E;
+         ++I)
+      ADD_FAILURE() << "unexpected error: " << I->second;
+    EXPECT_EQ(Instance.getCASDatabases().first, nullptr);
+    EXPECT_EQ(Instance.getCASDatabases().second, nullptr);
+  };
+
+  std::string PCH = Dir.path("a.pch").str().str();
+  {
+    GeneratePCHAction Action;
+    run({"-x", "c-header", Dir.path("a.h").str().str(), "-emit-pch", "-o", PCH},
+        Action);
+  }
+  {
+    SyntaxOnlyAction Action;
+    run({"-include-pch", PCH, "-fsyntax-only", Dir.path("t.c").str().str()},
+        Action);
+  }
+  {
+    SyntaxOnlyAction Action;
+    run({"-fmodules", "-fimplicit-module-maps",
+         "-fmodules-cache-path=" + Dir.path("cache").str().str(),
+         "-fsyntax-only", Dir.path("u.c").str().str()},
+        Action);
+  }
+}
+
 TEST(CompilerInstance, MultipleInputsCleansFileIDs) {
   auto VFS = makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
   VFS->addFile("a.cc", /*ModificationTime=*/{},

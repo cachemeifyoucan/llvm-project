@@ -676,14 +676,15 @@ void CompilerInstance::createPCHExternalASTSource(
     bool OwnDeserializationListener,
     std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
   bool Preamble = getPreprocessorOpts().PrecompiledPreambleBytes.first != 0;
+  auto [CAS, Cache] = getCASDatabases();
   TheASTReader = createPCHExternalASTSource(
       Path, getHeaderSearchOpts().Sysroot, DisableValidation,
       AllowPCHWithCompilerErrors, getPreprocessor(), getModuleCache(),
       getASTContext(), getPCHContainerReader(), getCodeGenOpts(),
       getFrontendOpts().ModuleFileExtensions, DependencyCollectors,
       DeserializationListener, OwnDeserializationListener, Preamble,
-      getFrontendOpts().UseGlobalModuleIndex, getOrCreateObjectStore(),
-      getOrCreateActionCache(), std::move(PCHBuffer));
+      getFrontendOpts().UseGlobalModuleIndex, CAS.get(), Cache.get(),
+      std::move(PCHBuffer));
 }
 
 IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
@@ -695,8 +696,8 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
     ArrayRef<std::shared_ptr<ModuleFileExtension>> Extensions,
     ArrayRef<std::shared_ptr<DependencyCollector>> DependencyCollectors,
     void *DeserializationListener, bool OwnDeserializationListener,
-    bool Preamble, bool UseGlobalModuleIndex, cas::ObjectStore &CAS,
-    cas::ActionCache &Cache, std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
+    bool Preamble, bool UseGlobalModuleIndex, cas::ObjectStore *CAS,
+    cas::ActionCache *Cache, std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
   const HeaderSearchOptions &HSOpts =
       PP.getHeaderSearchInfo().getHeaderSearchOpts();
 
@@ -719,8 +720,11 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
   for (auto &Listener : DependencyCollectors)
     Listener->attachToASTReader(*Reader);
 
-  Reader->addListener(std::make_unique<CompileCacheASTReaderHelper>(
-      CAS, Cache, ModCache, PP.getDiagnostics()));
+  // Module files may refer to the modules they import by their cache keys,
+  // which can only be resolved if this compilation uses a CAS.
+  if (CAS && Cache)
+    Reader->addListener(std::make_unique<CompileCacheASTReaderHelper>(
+        *CAS, *Cache, ModCache, PP.getDiagnostics()));
 
   auto Listener = std::make_unique<ReadModuleNames>(PP);
   auto &ListenerRef = *Listener;
@@ -2068,9 +2072,11 @@ void CompilerInstance::createASTReader() {
   for (auto &Listener : DependencyCollectors)
     Listener->attachToASTReader(*TheASTReader);
 
-  TheASTReader->addListener(std::make_unique<CompileCacheASTReaderHelper>(
-      getOrCreateObjectStore(), getOrCreateActionCache(), getModuleCache(),
-      getDiagnostics()));
+  // Module files may refer to the modules they import by their cache keys,
+  // which can only be resolved if this compilation uses a CAS.
+  if (CAS && ActionCache)
+    TheASTReader->addListener(std::make_unique<CompileCacheASTReaderHelper>(
+        *CAS, *ActionCache, getModuleCache(), getDiagnostics()));
 }
 
 bool CompilerInstance::loadModuleFile(
