@@ -595,6 +595,8 @@ public:
         for (auto &&ModID : ModuleIDs) {
           auto &MD = Modules[ModID];
           JOS.object([&] {
+            if (MD.ModuleCacheKey)
+              JOS.attribute("cache-key", StringRef(*MD.ModuleCacheKey));
             if (MD.IncludeTreeID)
               JOS.attribute("cas-include-tree-id",
                             StringRef(*MD.IncludeTreeID));

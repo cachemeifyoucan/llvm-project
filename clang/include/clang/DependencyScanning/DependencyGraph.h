@@ -25,6 +25,7 @@ struct PrebuiltModuleDep {
   std::string ModuleName;
   std::string PCMFile;
   std::string ModuleMapFile;
+  std::string ModuleCacheKey;
 };
 
 /// This is used to identify a specific module.
@@ -126,6 +127,9 @@ struct ModuleDeps {
 
   /// The CASID for the module include-tree, if any.
   std::optional<std::string> IncludeTreeID;
+
+  /// The \c ActionCache key for this module, if any.
+  std::optional<std::string> ModuleCacheKey;
 
   /// The set of libraries or frameworks to link against when
   /// an entity from this module is used.

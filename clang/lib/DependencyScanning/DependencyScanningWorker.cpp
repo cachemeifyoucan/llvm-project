@@ -133,18 +133,17 @@ using PrebuiltModuleFilesT = decltype(HeaderSearchOptions::PrebuiltModuleFiles);
 /// whether prebuilt modules fully resolve in stable directories.
 class PrebuiltModuleListener : public ASTReaderListener {
 public:
-  PrebuiltModuleListener(PrebuiltModuleFilesT &PrebuiltModuleFiles,
+  PrebuiltModuleListener(CompilerInstance &CI,
+                         PrebuiltModuleFilesT &PrebuiltModuleFiles,
                          llvm::SmallVector<std::string> &NewModuleFiles,
                          PrebuiltModulesAttrsMap &PrebuiltModulesASTMap,
-                         const HeaderSearchOptions &HSOpts,
-                         const LangOptions &LangOpts, DiagnosticsEngine &Diags,
+                         DiagnosticsEngine &Diags,
                          const ArrayRef<StringRef> StableDirs,
                          llvm::PrefixMapper ReverseMapper)
-      : PrebuiltModuleFiles(PrebuiltModuleFiles),
+      : CI(CI), PrebuiltModuleFiles(PrebuiltModuleFiles),
         NewModuleFiles(NewModuleFiles),
-        PrebuiltModulesASTMap(PrebuiltModulesASTMap), ExistingHSOpts(HSOpts),
-        ExistingLangOpts(LangOpts), Diags(Diags), StableDirs(StableDirs),
-        ReverseMapper(std::move(ReverseMapper)) {}
+        PrebuiltModulesASTMap(PrebuiltModulesASTMap), Diags(Diags),
+        StableDirs(StableDirs), ReverseMapper(std::move(ReverseMapper)) {}
 
   bool needsImportVisitation() const override { return true; }
   bool needsInputFileVisitation() override { return true; }
@@ -246,16 +245,24 @@ public:
     PrebuiltModule.setVFS(
         llvm::StringSet<>(llvm::from_range, HSOpts.VFSOverlayFiles));
 
-    return checkHeaderSearchPaths(
-        HSOpts, ExistingHSOpts, Complain ? &Diags : nullptr, ExistingLangOpts);
+    return checkHeaderSearchPaths(HSOpts, CI.getHeaderSearchOpts(),
+                                  Complain ? &Diags : nullptr,
+                                  CI.getLangOpts());
+  }
+
+  bool readModuleCacheKey(StringRef ModuleName, StringRef Filename,
+                          StringRef CacheKey) override {
+    CI.getFrontendOpts().ModuleCacheKeys.emplace_back(std::string(Filename),
+                                                      std::string(CacheKey));
+    // FIXME: add name/path of the importing module?
+    return CI.addCachedModuleFile(Filename, CacheKey, "imported module");
   }
 
 private:
+  CompilerInstance &CI;
   PrebuiltModuleFilesT &PrebuiltModuleFiles;
   llvm::SmallVector<std::string> &NewModuleFiles;
   PrebuiltModulesAttrsMap &PrebuiltModulesASTMap;
-  const HeaderSearchOptions &ExistingHSOpts;
-  const LangOptions &ExistingLangOpts;
   DiagnosticsEngine &Diags;
   std::string CurrentFile;
   const ArrayRef<StringRef> StableDirs;
@@ -274,9 +281,8 @@ static bool visitPrebuiltModule(StringRef PrebuiltModuleFilename,
   // List of module files to be processed.
   llvm::SmallVector<std::string> Worklist;
 
-  PrebuiltModuleListener Listener(ModuleFiles, Worklist, PrebuiltModulesASTMap,
-                                  CI.getHeaderSearchOpts(), CI.getLangOpts(),
-                                  Diags, StableDirs,
+  PrebuiltModuleListener Listener(CI, ModuleFiles, Worklist,
+                                  PrebuiltModulesASTMap, Diags, StableDirs,
                                   getReversePrefixMapper(CI.getInvocation()));
 
   Listener.visitModuleFile(ModuleFileName::makeExplicit(PrebuiltModuleFilename),
