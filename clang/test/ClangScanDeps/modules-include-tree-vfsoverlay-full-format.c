@@ -1,4 +1,5 @@
-// Check cas-fs-based caching works with vfsoverlay files.
+// Check include-tree caching works with vfsoverlay files when the output
+// format is experimental-full.
 
 // REQUIRES: ondisk_cas
 // RUN: rm -rf %t

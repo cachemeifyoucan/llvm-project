@@ -1,5 +1,5 @@
 // Check that files that should not impact the module build are not included in
-// the cas-fs, which can cause spurious rebuilds.
+// the include-tree, which can cause spurious rebuilds.
 
 // REQUIRES: ondisk_cas
 

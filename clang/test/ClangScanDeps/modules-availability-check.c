@@ -1,4 +1,4 @@
-// Check cas-fs-based caching works with availability check based on
+// Check include-tree caching works with availability check based on
 // SDKSettings.json.
 
 // REQUIRES: ondisk_cas

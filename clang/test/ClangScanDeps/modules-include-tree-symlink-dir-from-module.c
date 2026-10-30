@@ -1,5 +1,5 @@
 // Check that the path of an "affecting" modulemap file matches what is captured
-// in the cas fs.
+// in the include-tree.
 
 // REQUIRES: ondisk_cas
 // UNSUPPORTED: system-windows
