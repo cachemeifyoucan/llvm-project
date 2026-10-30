@@ -222,10 +222,18 @@ bool dependencies::isPathInStableDir(const ArrayRef<StringRef> Directories,
 
 bool dependencies::areOptionsInStableDir(const ArrayRef<StringRef> Directories,
                                          const HeaderSearchOptions &HSOpts) {
-  assert(isPathInStableDir(Directories, HSOpts.Sysroot) &&
+  // The sysroot and resource directory of the TU are themselves stable
+  // directories. They may be relative paths, which isPathInStableDir never
+  // considers stable, so also accept an exact match.
+  [[maybe_unused]] auto IsStableDirOrInStableDir = [&](StringRef Path) {
+    return llvm::is_contained(Directories, Path) ||
+           isPathInStableDir(Directories, Path);
+  };
+
+  assert(IsStableDirOrInStableDir(HSOpts.Sysroot) &&
          "Sysroots differ between module dependencies and current TU");
 
-  assert(isPathInStableDir(Directories, HSOpts.ResourceDir) &&
+  assert(IsStableDirOrInStableDir(HSOpts.ResourceDir) &&
          "ResourceDirs differ between module dependencies and current TU");
 
   for (const auto &Entry : HSOpts.UserEntries) {
