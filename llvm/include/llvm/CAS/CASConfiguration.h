@@ -67,7 +67,8 @@ public:
   LLVM_ABI static llvm::Expected<CASConfiguration>
   createFromConfig(llvm::StringRef Content);
 
-  /// Create CASConfiguration from recurively search config file from a path.
+  /// Create CASConfiguration by searching for a config file in \p Path and
+  /// its parent directories.
   ///
   /// Returns the path to configuration file and its corresponding
   /// CASConfiguration.
