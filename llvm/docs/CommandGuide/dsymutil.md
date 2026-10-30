@@ -52,8 +52,8 @@ Cannot be used with {option}`--flat` or {option}`--no-output`.
 :::
 
 :::{option} --cas <path to CAS>
-Specify the path to a content addressable storage that dsymutil may used to
-resolve CASID file paths in the debug info.
+Specify the path to a content addressable storage that dsymutil may use to
+resolve CAS IDs that reference files in the debug info.
 :::
 
 :::{option} --cas-plugin-path <path to dylib>
