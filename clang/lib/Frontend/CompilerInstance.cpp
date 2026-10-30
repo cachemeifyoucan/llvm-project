@@ -677,6 +677,10 @@ void CompilerInstance::createPCHExternalASTSource(
     std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
   bool Preamble = getPreprocessorOpts().PrecompiledPreambleBytes.first != 0;
   auto [CAS, Cache] = getCASDatabases();
+  if (getFrontendOpts().ModuleLoadIgnoreCAS) {
+    CAS = nullptr;
+    Cache = nullptr;
+  }
   TheASTReader = createPCHExternalASTSource(
       Path, getHeaderSearchOpts().Sysroot, DisableValidation,
       AllowPCHWithCompilerErrors, getPreprocessor(), getModuleCache(),
@@ -2074,7 +2078,7 @@ void CompilerInstance::createASTReader() {
 
   // Module files may refer to the modules they import by their cache keys,
   // which can only be resolved if this compilation uses a CAS.
-  if (CAS && ActionCache)
+  if (CAS && ActionCache && !FEOpts.ModuleLoadIgnoreCAS)
     TheASTReader->addListener(std::make_unique<CompileCacheASTReaderHelper>(
         *CAS, *ActionCache, getModuleCache(), getDiagnostics()));
 }

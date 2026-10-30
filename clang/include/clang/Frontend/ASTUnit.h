@@ -97,6 +97,8 @@ class ASTUnit {
   IntrusiveRefCntPtr<DiagnosticsEngine>   Diagnostics;
   IntrusiveRefCntPtr<FileManager>         FileMgr;
   IntrusiveRefCntPtr<SourceManager>       SourceMgr;
+  std::shared_ptr<cas::ObjectStore> CAS;
+  std::shared_ptr<cas::ActionCache> ActionCache;
   std::shared_ptr<ModuleCache> ModCache;
   std::unique_ptr<HeaderSearch>           HeaderInfo;
   IntrusiveRefCntPtr<TargetInfo>          Target;
