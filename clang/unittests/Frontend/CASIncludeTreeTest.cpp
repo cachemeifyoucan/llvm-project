@@ -93,7 +93,7 @@ protected:
                        llvm::SmallBitVector Checks = {}) {
     std::optional<IncludeTree> Tree;
     EXPECT_THAT_ERROR(IncludeTree::create(*DB, SrcMgr::C_User, File.getRef(),
-                                          Includes, Checks)
+                                          Includes, std::nullopt, Checks)
                           .moveInto(Tree),
                       Succeeded());
     return *Tree;
@@ -115,10 +115,11 @@ protected:
                       Succeeded());
     FileEntries.clear();
     std::optional<IncludeTreeRoot> Root;
-    EXPECT_THAT_ERROR(
-        IncludeTreeRoot::create(*DB, MainTree.getRef(), List->getRef(), PCH)
-            .moveInto(Root),
-        Succeeded());
+    EXPECT_THAT_ERROR(IncludeTreeRoot::create(*DB, MainTree.getRef(),
+                                              List->getRef(), PCH, std::nullopt,
+                                              std::nullopt)
+                          .moveInto(Root),
+                      Succeeded());
     return Root->getID().toString();
   }
 

@@ -465,7 +465,9 @@ Expected<cas::IncludeTreeRoot> IncludeTreeBuilder::finishIncludeTree(
     return FileList.takeError();
 
   return cas::IncludeTreeRoot::create(DB, MainIncludeTree->getRef(),
-                                      FileList->getRef(), PCHRef);
+                                      FileList->getRef(), PCHRef,
+                                      /*ModuleMapRef=*/std::nullopt,
+                                      /*APINotesRef=*/std::nullopt);
 }
 
 Error IncludeTreeBuilder::addModuleInputs(ASTReader &Reader) {
@@ -574,8 +576,9 @@ Expected<cas::ObjectRef> IncludeTreeBuilder::addToFileList(FileManager &FM,
 
 Expected<cas::IncludeTree>
 IncludeTreeBuilder::getCASTreeForFileIncludes(FilePPState &&PPState) {
-  return cas::IncludeTree::create(DB, PPState.FileCharacteristic, PPState.File,
-                                  PPState.Includes, PPState.HasIncludeChecks);
+  return cas::IncludeTree::create(
+      DB, PPState.FileCharacteristic, PPState.File, PPState.Includes,
+      /*SubmoduleName=*/std::nullopt, PPState.HasIncludeChecks);
 }
 
 Expected<cas::IncludeTree::File>

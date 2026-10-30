@@ -45,7 +45,7 @@ TEST(IncludeTree, IncludeTreeAndRoot) {
 
   std::optional<IncludeTree> HeaderTree;
   ASSERT_THAT_ERROR(IncludeTree::create(*DB, SrcMgr::C_System,
-                                        HeaderFile->getRef(), {},
+                                        HeaderFile->getRef(), {}, std::nullopt,
                                         llvm::SmallBitVector())
                         .moveInto(HeaderTree),
                     llvm::Succeeded());
@@ -60,7 +60,7 @@ TEST(IncludeTree, IncludeTreeAndRoot) {
                                    IncludeTree::NodeKind::Tree};
   std::optional<IncludeTree> MainTree;
   ASSERT_THAT_ERROR(IncludeTree::create(*DB, SrcMgr::C_User, MainFile->getRef(),
-                                        Include, Checks)
+                                        Include, std::nullopt, Checks)
                         .moveInto(MainTree),
                     llvm::Succeeded());
   EXPECT_EQ(MainTree->getFileCharacteristic(), SrcMgr::C_User);
@@ -96,7 +96,8 @@ TEST(IncludeTree, IncludeTreeAndRoot) {
   // A root without a PCH.
   std::optional<IncludeTreeRoot> Root;
   ASSERT_THAT_ERROR(IncludeTreeRoot::create(*DB, MainTree->getRef(),
-                                            List->getRef(), std::nullopt)
+                                            List->getRef(), std::nullopt,
+                                            std::nullopt, std::nullopt)
                         .moveInto(Root),
                     llvm::Succeeded());
   EXPECT_EQ(Root->getMainFileTreeRef(), MainTree->getRef());
@@ -106,7 +107,8 @@ TEST(IncludeTree, IncludeTreeAndRoot) {
   // A root with a PCH.
   std::optional<IncludeTreeRoot> PCHRoot;
   ASSERT_THAT_ERROR(IncludeTreeRoot::create(*DB, MainTree->getRef(),
-                                            List->getRef(), PCHFile->getRef())
+                                            List->getRef(), PCHFile->getRef(),
+                                            std::nullopt, std::nullopt)
                         .moveInto(PCHRoot),
                     llvm::Succeeded());
   EXPECT_EQ(PCHRoot->getPCHRef(), PCHFile->getRef());
@@ -535,4 +537,285 @@ TEST(IncludeTree, IncludeTreeFileSystemPrint) {
     Printed = Printed.drop_front(64); // 32 hash bytes in hex
     EXPECT_EQ(Printed, "\n");         // Final newline.
   }
+}
+
+TEST(IncludeTree, ModuleImports) {
+  std::shared_ptr<ObjectStore> DB = llvm::cas::createInMemoryCAS();
+
+  std::optional<IncludeTree::ModuleImport> Import, VisibleImport;
+  ASSERT_THAT_ERROR(IncludeTree::ModuleImport::create(*DB, "Foo.Bar",
+                                                      /*VisibilityOnly=*/false)
+                        .moveInto(Import),
+                    llvm::Succeeded());
+  ASSERT_THAT_ERROR(IncludeTree::ModuleImport::create(*DB, "Baz",
+                                                      /*VisibilityOnly=*/true)
+                        .moveInto(VisibleImport),
+                    llvm::Succeeded());
+  EXPECT_EQ(Import->getModuleName(), "Foo.Bar");
+  EXPECT_FALSE(Import->visibilityOnly());
+  EXPECT_EQ(VisibleImport->getModuleName(), "Baz");
+  EXPECT_TRUE(VisibleImport->visibilityOnly());
+
+  std::optional<ObjectRef> Contents, SubmoduleName;
+  ASSERT_THAT_ERROR(DB->storeFromString({}, "int x;\n").moveInto(Contents),
+                    llvm::Succeeded());
+  ASSERT_THAT_ERROR(DB->storeFromString({}, "Foo.Bar").moveInto(SubmoduleName),
+                    llvm::Succeeded());
+  std::optional<IncludeTree::File> Header;
+  ASSERT_THAT_ERROR(
+      IncludeTree::File::create(*DB, "Bar.h", *Contents).moveInto(Header),
+      llvm::Succeeded());
+
+  // A modular header records the name of the submodule it belongs to.
+  std::optional<IncludeTree> HeaderTree;
+  ASSERT_THAT_ERROR(IncludeTree::create(*DB, SrcMgr::C_User, Header->getRef(),
+                                        {}, SubmoduleName,
+                                        llvm::SmallBitVector())
+                        .moveInto(HeaderTree),
+                    llvm::Succeeded());
+  EXPECT_TRUE(HeaderTree->isSubmodule());
+  EXPECT_EQ(HeaderTree->getNumIncludes(), 0u);
+  std::optional<std::optional<StringRef>> Name;
+  ASSERT_THAT_ERROR(HeaderTree->getSubmoduleName().moveInto(Name),
+                    llvm::Succeeded());
+  EXPECT_EQ(*Name, StringRef("Foo.Bar"));
+
+  // A spurious import pairs a module import with the textual include-tree
+  // of a header that turned out not to be part of the module.
+  std::optional<IncludeTree::SpuriousImport> Spurious;
+  ASSERT_THAT_ERROR(IncludeTree::SpuriousImport::create(*DB, Import->getRef(),
+                                                        HeaderTree->getRef())
+                        .moveInto(Spurious),
+                    llvm::Succeeded());
+  std::optional<IncludeTree::ModuleImport> SpuriousModule;
+  ASSERT_THAT_ERROR(Spurious->getModuleImport().moveInto(SpuriousModule),
+                    llvm::Succeeded());
+  EXPECT_EQ(SpuriousModule->getModuleName(), "Foo.Bar");
+  std::optional<IncludeTree> SpuriousTree;
+  ASSERT_THAT_ERROR(Spurious->getIncludeTree().moveInto(SpuriousTree),
+                    llvm::Succeeded());
+  EXPECT_EQ(SpuriousTree->getRef(), HeaderTree->getRef());
+
+  // The main file includes a tree, imports a module and has a spurious
+  // import, in that order.
+  std::optional<IncludeTree::File> MainFile;
+  ASSERT_THAT_ERROR(
+      IncludeTree::File::create(*DB, "t.c", *Contents).moveInto(MainFile),
+      llvm::Succeeded());
+  IncludeTree::IncludeInfo Includes[] = {
+      {HeaderTree->getRef(), 1, IncludeTree::NodeKind::Tree},
+      {Import->getRef(), 2, IncludeTree::NodeKind::ModuleImport},
+      {Spurious->getRef(), 3, IncludeTree::NodeKind::SpuriousImport},
+  };
+  std::optional<IncludeTree> MainTree;
+  ASSERT_THAT_ERROR(IncludeTree::create(*DB, SrcMgr::C_User, MainFile->getRef(),
+                                        Includes, std::nullopt,
+                                        llvm::SmallBitVector())
+                        .moveInto(MainTree),
+                    llvm::Succeeded());
+  EXPECT_FALSE(MainTree->isSubmodule());
+  ASSERT_EQ(MainTree->getNumIncludes(), 3u);
+  EXPECT_EQ(MainTree->getIncludeKind(0), IncludeTree::NodeKind::Tree);
+  EXPECT_EQ(MainTree->getIncludeKind(1), IncludeTree::NodeKind::ModuleImport);
+  EXPECT_EQ(MainTree->getIncludeKind(2), IncludeTree::NodeKind::SpuriousImport);
+  EXPECT_EQ(MainTree->getIncludeOffset(1), 2u);
+
+  std::optional<IncludeTree::Node> Node;
+  ASSERT_THAT_ERROR(MainTree->getIncludeNode(1).moveInto(Node),
+                    llvm::Succeeded());
+  EXPECT_EQ(Node->getKind(), IncludeTree::NodeKind::ModuleImport);
+  EXPECT_EQ(Node->getModuleImport().getModuleName(), "Foo.Bar");
+  ASSERT_THAT_ERROR(MainTree->getIncludeNode(2).moveInto(Node),
+                    llvm::Succeeded());
+  EXPECT_EQ(Node->getKind(), IncludeTree::NodeKind::SpuriousImport);
+}
+
+TEST(IncludeTree, ModuleMap) {
+  std::shared_ptr<ObjectStore> DB = llvm::cas::createInMemoryCAS();
+
+  std::optional<IncludeTree::Module::ExportList> Exports;
+  ASSERT_THAT_ERROR(
+      IncludeTree::Module::ExportList::create(
+          *DB, {{"Exported", /*Wildcard=*/false}, {"Other", /*Wildcard=*/true}},
+          /*GlobalWildcard=*/true)
+          .moveInto(Exports),
+      llvm::Succeeded());
+  EXPECT_TRUE(Exports->hasGlobalWildcard());
+  ASSERT_EQ(Exports->getNumExplicitExports(), 2u);
+  EXPECT_FALSE(Exports->exportHasWildcard(0));
+  EXPECT_TRUE(Exports->exportHasWildcard(1));
+  std::optional<IncludeTree::Module::ExportList::Export> Export;
+  ASSERT_THAT_ERROR(Exports->getExplicitExport(1).moveInto(Export),
+                    llvm::Succeeded());
+  EXPECT_EQ(Export->ModuleName, "Other");
+  EXPECT_TRUE(Export->Wildcard);
+
+  std::optional<IncludeTree::Module::LinkLibraryList> Libs;
+  ASSERT_THAT_ERROR(IncludeTree::Module::LinkLibraryList::create(
+                        *DB, {{"z", /*IsFramework=*/false},
+                              {"Foundation", /*IsFramework=*/true}})
+                        .moveInto(Libs),
+                    llvm::Succeeded());
+  ASSERT_EQ(Libs->getNumLibraries(), 2u);
+  EXPECT_FALSE(Libs->isFramework(0));
+  EXPECT_TRUE(Libs->isFramework(1));
+  std::optional<IncludeTree::Module::LinkLibraryList::LinkLibrary> Lib;
+  ASSERT_THAT_ERROR(Libs->getLinkLibrary(1).moveInto(Lib), llvm::Succeeded());
+  EXPECT_EQ(Lib->Library, "Foundation");
+  EXPECT_TRUE(Lib->IsFramework);
+
+  std::optional<IncludeTree::Module::RequirementList> Reqs;
+  ASSERT_THAT_ERROR(IncludeTree::Module::RequirementList::create(
+                        *DB, {{"cplusplus", /*RequiredState=*/true},
+                              {"objc", /*RequiredState=*/false}})
+                        .moveInto(Reqs),
+                    llvm::Succeeded());
+  SmallVector<std::pair<std::string, bool>> ReqsSeen;
+  ASSERT_THAT_ERROR(Reqs->forEachRequirement([&](auto R) -> llvm::Error {
+    ReqsSeen.emplace_back(R.FeatureName.str(), R.RequiredState);
+    return llvm::Error::success();
+  }),
+                    llvm::Succeeded());
+  EXPECT_EQ(ReqsSeen.size(), 2u);
+  EXPECT_EQ(ReqsSeen[0], std::make_pair(std::string("cplusplus"), true));
+  EXPECT_EQ(ReqsSeen[1], std::make_pair(std::string("objc"), false));
+
+  IncludeTree::Module::ModuleFlags SubFlags;
+  SubFlags.IsExplicit = true;
+  std::optional<IncludeTree::Module> Sub;
+  ASSERT_THAT_ERROR(IncludeTree::Module::create(*DB, "Sub", /*ExportAs=*/"",
+                                                SubFlags, {}, Exports->getRef(),
+                                                std::nullopt, std::nullopt)
+                        .moveInto(Sub),
+                    llvm::Succeeded());
+
+  IncludeTree::Module::ModuleFlags Flags;
+  Flags.IsFramework = true;
+  Flags.IsSystem = true;
+  Flags.InferSubmodules = true;
+  Flags.ModuleMapIsPrivate = true;
+  std::optional<IncludeTree::Module> Top;
+  ASSERT_THAT_ERROR(IncludeTree::Module::create(*DB, "Top", "TopKit", Flags,
+                                                {Sub->getRef()}, std::nullopt,
+                                                Libs->getRef(), Reqs->getRef())
+                        .moveInto(Top),
+                    llvm::Succeeded());
+  EXPECT_EQ(Top->getName(), "Top");
+  EXPECT_EQ(Top->getExportAsModule(), "TopKit");
+  IncludeTree::Module::ModuleFlags TopFlags = Top->getFlags();
+  EXPECT_TRUE(TopFlags.IsFramework);
+  EXPECT_TRUE(TopFlags.IsSystem);
+  EXPECT_TRUE(TopFlags.InferSubmodules);
+  EXPECT_TRUE(TopFlags.ModuleMapIsPrivate);
+  EXPECT_FALSE(TopFlags.IsExplicit);
+  EXPECT_FALSE(TopFlags.IsExternC);
+  ASSERT_EQ(Top->getNumSubmodules(), 1u);
+  EXPECT_EQ(Top->getExportsRef(), std::nullopt);
+  EXPECT_EQ(Top->getLinkLibrariesRef(), Libs->getRef());
+  EXPECT_EQ(Top->getRequirementsRef(), Reqs->getRef());
+
+  std::optional<IncludeTree::Module> SubModule;
+  ASSERT_THAT_ERROR(Top->getSubmodule(0).moveInto(SubModule),
+                    llvm::Succeeded());
+  EXPECT_EQ(SubModule->getName(), "Sub");
+  EXPECT_TRUE(SubModule->getFlags().IsExplicit);
+  EXPECT_EQ(SubModule->getNumSubmodules(), 0u);
+  std::optional<std::optional<IncludeTree::Module::ExportList>> SubExports;
+  ASSERT_THAT_ERROR(SubModule->getExports().moveInto(SubExports),
+                    llvm::Succeeded());
+  ASSERT_TRUE(SubExports->has_value());
+  EXPECT_TRUE((*SubExports)->hasGlobalWildcard());
+
+  std::optional<IncludeTree::ModuleMap> MM;
+  ASSERT_THAT_ERROR(
+      IncludeTree::ModuleMap::create(*DB, {Top->getRef()}).moveInto(MM),
+      llvm::Succeeded());
+  ASSERT_EQ(MM->getNumModules(), 1u);
+  SmallVector<std::string> Names;
+  ASSERT_THAT_ERROR(MM->forEachModule([&](IncludeTree::Module M) {
+    Names.push_back(M.getName().str());
+    return llvm::Error::success();
+  }),
+                    llvm::Succeeded());
+  EXPECT_EQ(Names, SmallVector<std::string>{"Top"});
+
+  std::string Printed;
+  llvm::raw_string_ostream OS(Printed);
+  ASSERT_THAT_ERROR(MM->print(OS), llvm::Succeeded());
+  EXPECT_NE(Printed.find("Top (framework)"), std::string::npos) << Printed;
+  EXPECT_NE(Printed.find("Sub (explicit)"), std::string::npos) << Printed;
+}
+
+TEST(IncludeTree, RootWithModuleMapAndAPINotes) {
+  std::shared_ptr<ObjectStore> DB = llvm::cas::createInMemoryCAS();
+
+  std::optional<ObjectRef> Contents, Notes;
+  ASSERT_THAT_ERROR(DB->storeFromString({}, "int x;\n").moveInto(Contents),
+                    llvm::Succeeded());
+  ASSERT_THAT_ERROR(DB->storeFromString({}, "Name: Foo\n").moveInto(Notes),
+                    llvm::Succeeded());
+  std::optional<IncludeTree::File> MainFile;
+  ASSERT_THAT_ERROR(
+      IncludeTree::File::create(*DB, "t.c", *Contents).moveInto(MainFile),
+      llvm::Succeeded());
+  std::optional<IncludeTree> MainTree;
+  ASSERT_THAT_ERROR(IncludeTree::create(*DB, SrcMgr::C_User, MainFile->getRef(),
+                                        {}, std::nullopt,
+                                        llvm::SmallBitVector())
+                        .moveInto(MainTree),
+                    llvm::Succeeded());
+  std::optional<IncludeTree::FileList> List;
+  ASSERT_THAT_ERROR(
+      IncludeTree::FileList::create(*DB, {{MainFile->getRef(), 7}}, {})
+          .moveInto(List),
+      llvm::Succeeded());
+
+  std::optional<IncludeTree::Module> Mod;
+  ASSERT_THAT_ERROR(IncludeTree::Module::create(
+                        *DB, "Foo", "", IncludeTree::Module::ModuleFlags(), {},
+                        std::nullopt, std::nullopt, std::nullopt)
+                        .moveInto(Mod),
+                    llvm::Succeeded());
+  std::optional<IncludeTree::ModuleMap> MM;
+  ASSERT_THAT_ERROR(
+      IncludeTree::ModuleMap::create(*DB, {Mod->getRef()}).moveInto(MM),
+      llvm::Succeeded());
+  std::optional<IncludeTree::APINotes> APINotes;
+  ASSERT_THAT_ERROR(
+      IncludeTree::APINotes::create(*DB, {*Notes}).moveInto(APINotes),
+      llvm::Succeeded());
+
+  std::optional<IncludeTreeRoot> Root;
+  ASSERT_THAT_ERROR(IncludeTreeRoot::create(*DB, MainTree->getRef(),
+                                            List->getRef(), std::nullopt,
+                                            MM->getRef(), APINotes->getRef())
+                        .moveInto(Root),
+                    llvm::Succeeded());
+  EXPECT_EQ(Root->getPCHRef(), std::nullopt);
+  EXPECT_EQ(Root->getModuleMapRef(), MM->getRef());
+  EXPECT_EQ(Root->getAPINotesRef(), APINotes->getRef());
+
+  std::optional<std::optional<IncludeTree::ModuleMap>> RootMM;
+  ASSERT_THAT_ERROR(Root->getModuleMap().moveInto(RootMM), llvm::Succeeded());
+  ASSERT_TRUE(RootMM->has_value());
+  EXPECT_EQ((*RootMM)->getNumModules(), 1u);
+
+  std::optional<std::optional<IncludeTree::APINotes>> RootNotes;
+  ASSERT_THAT_ERROR(Root->getAPINotes().moveInto(RootNotes), llvm::Succeeded());
+  ASSERT_TRUE(RootNotes->has_value());
+  SmallVector<std::string> NoteContents;
+  ASSERT_THAT_ERROR((*RootNotes)->forEachAPINotes([&](StringRef Data) {
+    NoteContents.push_back(Data.str());
+    return llvm::Error::success();
+  }),
+                    llvm::Succeeded());
+  EXPECT_EQ(NoteContents, SmallVector<std::string>{"Name: Foo\n"});
+
+  // The root can be read back from its reference.
+  std::optional<IncludeTreeRoot> Reloaded;
+  ASSERT_THAT_ERROR(
+      IncludeTreeRoot::get(*DB, Root->getRef()).moveInto(Reloaded),
+      llvm::Succeeded());
+  EXPECT_EQ(Reloaded->getModuleMapRef(), MM->getRef());
+  EXPECT_EQ(Reloaded->getAPINotesRef(), APINotes->getRef());
 }

@@ -44,6 +44,12 @@ Expected<NodeT> IncludeTreeBase<NodeT>::create(ObjectStore &DB,
   return NodeT(*Proxy);
 }
 
+Expected<IncludeTree::SpuriousImport>
+IncludeTree::SpuriousImport::create(ObjectStore &DB, ObjectRef ImportRef,
+                                    ObjectRef TreeRef) {
+  return IncludeTreeBase::create(DB, {ImportRef, TreeRef}, {});
+}
+
 Expected<IncludeTree::File> IncludeTree::File::create(ObjectStore &DB,
                                                       StringRef Filename,
                                                       ObjectRef Contents) {
@@ -115,11 +121,10 @@ static void writeBitSet(llvm::support::endian::Writer &Writer,
   }
 }
 
-Expected<IncludeTree>
-IncludeTree::create(ObjectStore &DB,
-                    SrcMgr::CharacteristicKind FileCharacteristic,
-                    ObjectRef BaseFile, ArrayRef<IncludeInfo> Includes,
-                    llvm::SmallBitVector Checks) {
+Expected<IncludeTree> IncludeTree::create(
+    ObjectStore &DB, SrcMgr::CharacteristicKind FileCharacteristic,
+    ObjectRef BaseFile, ArrayRef<IncludeInfo> Includes,
+    std::optional<ObjectRef> SubmoduleName, llvm::SmallBitVector Checks) {
   // The data buffer is composed of
   // 1. 1 byte for `CharacteristicKind` and IsSubmodule
   // 2. `uint32_t` offset and `uint8_t` kind for each includes
@@ -128,6 +133,8 @@ IncludeTree::create(ObjectStore &DB,
   char Kind = FileCharacteristic;
   assert(Kind == FileCharacteristic && (Kind & IsSubmoduleBit) == 0 &&
          "SrcMgr::CharacteristicKind too big!");
+  if (SubmoduleName)
+    Kind |= IsSubmoduleBit;
 
   assert(File::isValid(DB, BaseFile));
   SmallVector<ObjectRef, 16> Refs;
@@ -142,13 +149,20 @@ IncludeTree::create(ObjectStore &DB,
   llvm::support::endian::Writer Writer(BufOS, llvm::endianness::little);
 
   for (const auto &Include : Includes) {
-    assert(Include.Kind == NodeKind::Tree &&
-           IncludeTree::isValid(DB, Include.Ref));
+    assert((Include.Kind == NodeKind::Tree &&
+            IncludeTree::isValid(DB, Include.Ref)) ||
+           (Include.Kind == NodeKind::ModuleImport &&
+            ModuleImport::isValid(DB, Include.Ref)) ||
+           (Include.Kind == NodeKind::SpuriousImport &&
+            SpuriousImport::isValid(DB, Include.Ref)));
     Refs.push_back(Include.Ref);
     Writer.write(Include.Offset);
     static_assert(sizeof(uint8_t) == sizeof(Kind));
     Writer.write(static_cast<uint8_t>(Include.Kind));
   }
+
+  if (SubmoduleName)
+    Refs.push_back(*SubmoduleName);
 
   writeBitSet(Writer, Checks);
 
@@ -214,6 +228,15 @@ bool IncludeTree::isValid(const ObjectProxy &Node) {
   if (Base.getData().front() & IsSubmoduleBit)
     NumIncludes -= 1;
   return Base.getData().size() >= NumIncludes * (sizeof(uint32_t) + 1) + 1;
+}
+
+Expected<IncludeTree::ModuleImport>
+IncludeTree::ModuleImport::create(ObjectStore &DB, StringRef ModuleName,
+                                  bool VisibilityOnly) {
+  SmallString<64> Buffer;
+  Buffer.push_back((char)VisibilityOnly);
+  Buffer.append(ModuleName);
+  return IncludeTreeBase::create(DB, {}, Buffer);
 }
 
 size_t IncludeTree::FileList::getNumFilesCurrentList() const {
@@ -335,21 +358,362 @@ bool IncludeTree::FileList::isValid(const ObjectProxy &Node) {
          Data.size() == sizeof(uint32_t) + NumFiles * sizeof(FileSizeTy);
 }
 
+static constexpr uint16_t ModuleFlagFramework = 1 << 0;
+static constexpr uint16_t ModuleFlagExplicit = 1 << 1;
+static constexpr uint16_t ModuleFlagExternC = 1 << 2;
+static constexpr uint16_t ModuleFlagSystem = 1 << 3;
+static constexpr uint16_t ModuleFlagInferSubmodules = 1 << 4;
+static constexpr uint16_t ModuleFlagInferExplicitSubmodules = 1 << 5;
+static constexpr uint16_t ModuleFlagInferInferExportWildcard = 1 << 6;
+static constexpr uint16_t ModuleFlagHasExports = 1 << 7;
+static constexpr uint16_t ModuleFlagHasLinkLibraries = 1 << 8;
+static constexpr uint16_t ModuleFlagUseExportAsModuleLinkName = 1 << 9;
+static constexpr uint16_t ModuleFlagModuleMapIsPrivate = 1 << 10;
+static constexpr uint16_t ModuleFlagHasRequirements = 1 << 11;
+
+IncludeTree::Module::ModuleFlags IncludeTree::Module::getFlags() const {
+  uint16_t Raw = rawFlags();
+  ModuleFlags Flags;
+  Flags.IsFramework = Raw & ModuleFlagFramework;
+  Flags.IsExplicit = Raw & ModuleFlagExplicit;
+  Flags.IsExternC = Raw & ModuleFlagExternC;
+  Flags.IsSystem = Raw & ModuleFlagSystem;
+  Flags.InferSubmodules = Raw & ModuleFlagInferSubmodules;
+  Flags.InferExplicitSubmodules = Raw & ModuleFlagInferExplicitSubmodules;
+  Flags.InferExportWildcard = Raw & ModuleFlagInferInferExportWildcard;
+  Flags.UseExportAsModuleLinkName = Raw & ModuleFlagUseExportAsModuleLinkName;
+  Flags.ModuleMapIsPrivate = Raw & ModuleFlagModuleMapIsPrivate;
+  return Flags;
+}
+
+size_t IncludeTree::Module::getNumSubmodules() const {
+  size_t Count = getNumReferences();
+  if (hasExports())
+    Count -= 1;
+  if (hasLinkLibraries())
+    Count -= 1;
+  if (hasRequirements())
+    Count -= 1;
+  return Count;
+}
+
+llvm::Error IncludeTree::Module::forEachSubmodule(
+    llvm::function_ref<llvm::Error(Module)> CB) {
+  size_t Count = getNumSubmodules();
+  return forEachReference([&](ObjectRef Ref) -> llvm::Error {
+    if (Count == 0)
+      return llvm::Error::success();
+    Count -= 1;
+    auto Node = getCAS().getProxy(Ref);
+    if (!Node)
+      return Node.takeError();
+    return CB(Module(*Node));
+  });
+}
+
+Expected<IncludeTree::Module> IncludeTree::Module::create(
+    ObjectStore &DB, StringRef ModuleName, StringRef ExportAs,
+    ModuleFlags Flags, ArrayRef<ObjectRef> Submodules,
+    std::optional<ObjectRef> ExportList, std::optional<ObjectRef> LinkLibraries,
+    std::optional<ObjectRef> Requirements) {
+  // Data:
+  // - 2 bytes for Flags
+  // - ModuleName (String, null-terminated)
+  // - (optional) ExportAsModule
+  // Refs:
+  // - Submodules (IncludeTreeModule)
+  // - (optional) ExportList
+  // - (optional) LinkLibaryList
+  // - (optional) RequirementList
+
+  uint16_t RawFlags = 0;
+  if (Flags.IsFramework)
+    RawFlags |= ModuleFlagFramework;
+  if (Flags.IsExplicit)
+    RawFlags |= ModuleFlagExplicit;
+  if (Flags.IsExternC)
+    RawFlags |= ModuleFlagExternC;
+  if (Flags.IsSystem)
+    RawFlags |= ModuleFlagSystem;
+  if (Flags.InferSubmodules)
+    RawFlags |= ModuleFlagInferSubmodules;
+  if (Flags.InferExplicitSubmodules)
+    RawFlags |= ModuleFlagInferExplicitSubmodules;
+  if (Flags.InferExportWildcard)
+    RawFlags |= ModuleFlagInferInferExportWildcard;
+  if (ExportList)
+    RawFlags |= ModuleFlagHasExports;
+  if (LinkLibraries)
+    RawFlags |= ModuleFlagHasLinkLibraries;
+  if (Flags.UseExportAsModuleLinkName)
+    RawFlags |= ModuleFlagUseExportAsModuleLinkName;
+  if (Flags.ModuleMapIsPrivate)
+    RawFlags |= ModuleFlagModuleMapIsPrivate;
+  if (Requirements)
+    RawFlags |= ModuleFlagHasRequirements;
+
+  SmallString<64> Buffer;
+  llvm::raw_svector_ostream BufOS(Buffer);
+  llvm::support::endian::Writer Writer(BufOS, llvm::endianness::little);
+  Writer.write(RawFlags);
+
+  Buffer.append(ModuleName);
+  Buffer.append(StringRef("\0", 1));
+  Buffer.append(ExportAs);
+
+  SmallVector<ObjectRef> Refs(Submodules);
+  if (ExportList)
+    Refs.push_back(*ExportList);
+  if (LinkLibraries)
+    Refs.push_back(*LinkLibraries);
+  if (Requirements)
+    Refs.push_back(*Requirements);
+
+  return IncludeTreeBase::create(DB, Refs, Buffer);
+}
+
+uint16_t IncludeTree::Module::rawFlags() const {
+  return llvm::support::endian::read<uint16_t, llvm::endianness::little>(
+      getData().data());
+}
+
+bool IncludeTree::Module::hasExports() const {
+  return rawFlags() & ModuleFlagHasExports;
+}
+bool IncludeTree::Module::hasLinkLibraries() const {
+  return rawFlags() & ModuleFlagHasLinkLibraries;
+}
+bool IncludeTree::Module::hasRequirements() const {
+  return rawFlags() & ModuleFlagHasRequirements;
+}
+
+std::optional<unsigned> IncludeTree::Module::getExportsIndex() const {
+  if (hasExports()) {
+    unsigned Offset = 1;
+    if (hasRequirements())
+      Offset++;
+    if (hasLinkLibraries())
+      Offset++;
+    return getNumReferences() - Offset;
+  }
+  return std::nullopt;
+}
+std::optional<unsigned> IncludeTree::Module::getLinkLibrariesIndex() const {
+  if (hasLinkLibraries()) {
+    unsigned Offset = 1;
+    if (hasRequirements())
+      Offset++;
+    return getNumReferences() - Offset;
+  }
+  return std::nullopt;
+}
+std::optional<unsigned> IncludeTree::Module::getRequirementsIndex() const {
+  if (hasRequirements())
+    return getNumReferences() - 1;
+  return std::nullopt;
+}
+
+Expected<std::optional<IncludeTree::Module::ExportList>>
+IncludeTree::Module::getExports() {
+  if (auto Ref = getExportsRef()) {
+    auto N = getCAS().getProxy(*Ref);
+    if (!N)
+      return N.takeError();
+    return ExportList(std::move(*N));
+  }
+  return std::nullopt;
+}
+
+/// The list of modules that this submodule re-exports.
+Expected<std::optional<IncludeTree::Module::LinkLibraryList>>
+IncludeTree::Module::getLinkLibraries() {
+  if (auto Ref = getLinkLibrariesRef()) {
+    auto N = getCAS().getProxy(*Ref);
+    if (!N)
+      return N.takeError();
+    return LinkLibraryList(std::move(*N));
+  }
+  return std::nullopt;
+}
+
+Expected<std::optional<IncludeTree::Module::RequirementList>>
+IncludeTree::Module::getRequirements() {
+  if (auto Ref = getRequirementsRef()) {
+    auto N = getCAS().getProxy(*Ref);
+    if (!N)
+      return N.takeError();
+    return RequirementList(std::move(*N));
+  }
+  return std::nullopt;
+}
+
+bool IncludeTree::Module::ExportList::hasGlobalWildcard() const {
+  // The bit after explicit exports is global.
+  return exportHasWildcard(getNumExplicitExports());
+}
+bool IncludeTree::Module::ExportList::exportHasWildcard(size_t I) const {
+  assert(I < getNumExplicitExports() + 1);
+  unsigned ByteIndex = I / CHAR_BIT;
+  size_t RemainingIndex = I % CHAR_BIT;
+  uint8_t Bits = getData()[ByteIndex];
+  return Bits & (1 << RemainingIndex);
+}
+Expected<IncludeTree::Module::ExportList::Export>
+IncludeTree::Module::ExportList::getExplicitExport(size_t I) {
+  Expected<ObjectProxy> Name = getCAS().getProxy(getReference(I));
+  if (!Name)
+    return Name.takeError();
+  return Export{Name->getData(), exportHasWildcard(I)};
+}
+llvm::Error IncludeTree::Module::ExportList::forEachExplicitExport(
+    llvm::function_ref<llvm::Error(Export)> CB) {
+  size_t ExportI = 0;
+  return forEachReference([&](ObjectRef Ref) {
+    Expected<ObjectProxy> Name = getCAS().getProxy(Ref);
+    if (!Name)
+      return Name.takeError();
+    return CB(Export{Name->getData(), exportHasWildcard(ExportI)});
+  });
+}
+Expected<IncludeTree::Module::ExportList>
+IncludeTree::Module::ExportList::create(ObjectStore &DB,
+                                        ArrayRef<Export> Exports,
+                                        bool GlobalWildcard) {
+  // Data:
+  // - 1 bit per explicit export for wildcard
+  // - 1 bit for global wildcard
+  // Refs: export names
+  SmallString<64> Buffer;
+  llvm::raw_svector_ostream BufOS(Buffer);
+  llvm::support::endian::Writer Writer(BufOS, llvm::endianness::little);
+  SmallVector<ObjectRef> Refs;
+  llvm::SmallBitVector WildcardBits;
+  for (Export E : Exports) {
+    auto Ref = DB.storeFromString({}, E.ModuleName);
+    if (!Ref)
+      return Ref.takeError();
+    Refs.push_back(*Ref);
+    WildcardBits.push_back(E.Wildcard);
+  }
+  WildcardBits.push_back(GlobalWildcard);
+  writeBitSet(Writer, WildcardBits);
+
+  return IncludeTreeBase::create(DB, Refs, Buffer);
+}
+
+bool IncludeTree::Module::LinkLibraryList::isFramework(size_t I) const {
+  assert(I < getNumLibraries());
+  unsigned ByteIndex = I / CHAR_BIT;
+  size_t RemainingIndex = I % CHAR_BIT;
+  uint8_t Bits = getData()[ByteIndex];
+  return Bits & (1 << RemainingIndex);
+}
+llvm::Error IncludeTree::Module::LinkLibraryList::forEachLinkLibrary(
+    llvm::function_ref<llvm::Error(LinkLibrary)> CB) {
+  size_t I = 0;
+  return forEachReference([&](ObjectRef Ref) {
+    auto Name = getCAS().getProxy(getLibraryNameRef(I));
+    if (!Name)
+      return Name.takeError();
+    return CB({Name->getData(), isFramework(I++)});
+  });
+}
+Expected<IncludeTree::Module::LinkLibraryList>
+IncludeTree::Module::LinkLibraryList::create(ObjectStore &DB,
+                                             ArrayRef<LinkLibrary> Libraries) {
+  // Data:
+  // - 1 bit per library for IsFramework
+  // Refs: library names
+  SmallString<64> Buffer;
+  llvm::raw_svector_ostream BufOS(Buffer);
+  llvm::support::endian::Writer Writer(BufOS, llvm::endianness::little);
+  SmallVector<ObjectRef> Refs;
+  llvm::SmallBitVector FrameworkBits;
+  for (LinkLibrary L : Libraries) {
+    auto Ref = DB.storeFromString({}, L.Library);
+    if (!Ref)
+      return Ref.takeError();
+    Refs.push_back(*Ref);
+    FrameworkBits.push_back(L.IsFramework);
+  }
+  writeBitSet(Writer, FrameworkBits);
+
+  return IncludeTreeBase::create(DB, Refs, Buffer);
+}
+
+llvm::Error IncludeTree::Module::RequirementList::forEachRequirement(
+    llvm::function_ref<llvm::Error(Requirement)> CB) {
+  StringRef Data = getData();
+  while (!Data.empty()) {
+    bool State = Data[0] != 0;
+    Data = Data.drop_front(1);
+    size_t NullPos = Data.find('\0');
+    assert(NullPos != StringRef::npos);
+    StringRef Name = Data.take_front(NullPos);
+    Data = Data.drop_front(NullPos + 1);
+    if (llvm::Error E = CB({Name, State}))
+      return E;
+  }
+  return llvm::Error::success();
+}
+Expected<IncludeTree::Module::RequirementList>
+IncludeTree::Module::RequirementList::create(
+    ObjectStore &DB, ArrayRef<Requirement> Requirements) {
+  // Data: for each requirement, a state byte (0 or 1) followed by a
+  // null-terminated feature name.
+  SmallString<32> Buffer;
+  for (const Requirement &R : Requirements) {
+    Buffer.push_back(R.RequiredState ? 1 : 0);
+    Buffer.append(R.FeatureName);
+    Buffer.push_back('\0');
+  }
+
+  return IncludeTreeBase::create(DB, {}, Buffer);
+}
+
+Expected<IncludeTree::ModuleMap>
+IncludeTree::ModuleMap::create(ObjectStore &DB, ArrayRef<ObjectRef> Modules) {
+  return IncludeTreeBase::create(DB, Modules, {});
+}
+
+llvm::Error IncludeTree::ModuleMap::forEachModule(
+    llvm::function_ref<llvm::Error(Module)> CB) {
+  return forEachReference([&](ObjectRef Ref) {
+    auto N = getCAS().getProxy(Ref);
+    if (!N)
+      return N.takeError();
+    return CB(Module(std::move(*N)));
+  });
+}
+
 static constexpr char HasPCH = 1;
+static constexpr char HasModuleMap = 1 << 1;
+static constexpr char HasAPINotes = 1 << 2;
 
 Expected<IncludeTreeRoot>
 IncludeTreeRoot::create(ObjectStore &DB, ObjectRef MainFileTree,
-                        ObjectRef FileList, std::optional<ObjectRef> PCHRef) {
+                        ObjectRef FileList, std::optional<ObjectRef> PCHRef,
+                        std::optional<ObjectRef> ModuleMapRef,
+                        std::optional<ObjectRef> APINotesRef) {
   assert(IncludeTree::isValid(DB, MainFileTree));
   assert(IncludeTree::FileList::isValid(DB, FileList));
+  assert(!ModuleMapRef || IncludeTree::ModuleMap::isValid(DB, *ModuleMapRef));
 
   std::array<char, 1> Data = {0};
   if (PCHRef)
     Data[0] |= HasPCH;
+  if (ModuleMapRef)
+    Data[0] |= HasModuleMap;
+  if (APINotesRef)
+    Data[0] |= HasAPINotes;
 
   SmallVector<ObjectRef> Refs = {MainFileTree, FileList};
   if (PCHRef)
     Refs.push_back(*PCHRef);
+  if (ModuleMapRef)
+    Refs.push_back(*ModuleMapRef);
+  if (APINotesRef)
+    Refs.push_back(*APINotesRef);
 
   return IncludeTreeBase::create(DB, Refs, Data);
 }
@@ -369,6 +733,16 @@ std::optional<unsigned> IncludeTreeRoot::getPCHRefIndex() const {
     return 2;
   return std::nullopt;
 }
+std::optional<unsigned> IncludeTreeRoot::getModuleMapRefIndex() const {
+  if (getData()[0] & HasModuleMap)
+    return (getData()[0] & HasPCH) ? 3u : 2u;
+  return std::nullopt;
+}
+std::optional<unsigned> IncludeTreeRoot::getAPINotesRefIndex() const {
+  if (getData()[0] & HasAPINotes)
+    return 2 + (getPCHRefIndex() ? 1 : 0) + (getModuleMapRefIndex() ? 1 : 0);
+  return std::nullopt;
+}
 
 llvm::Error IncludeTree::File::print(llvm::raw_ostream &OS, unsigned Indent) {
   auto Filename = getFilename();
@@ -386,6 +760,12 @@ llvm::Error IncludeTree::print(llvm::raw_ostream &OS, unsigned Indent) {
     return IncludeBy.takeError();
   if (llvm::Error E = IncludeBy->print(OS))
     return E;
+
+  auto Submodule = getSubmoduleName();
+  if (!Submodule)
+    return Submodule.takeError();
+  if (*Submodule)
+    OS.indent(Indent) << "Submodule: " << **Submodule << '\n';
 
   llvm::SourceMgr SM;
   auto Blob = IncludeBy->getContents();
@@ -410,12 +790,169 @@ llvm::Error IncludeTree::FileList::print(llvm::raw_ostream &OS,
   });
 }
 
+llvm::Error IncludeTree::ModuleImport::print(llvm::raw_ostream &OS,
+                                             unsigned Indent, char End) {
+  if (visibilityOnly())
+    OS << "(Module for visibility only) ";
+  else
+    OS << "(Module) ";
+  OS << getModuleName() << End;
+  return llvm::Error::success();
+}
+
+llvm::Error IncludeTree::SpuriousImport::print(llvm::raw_ostream &OS,
+                                               unsigned Indent) {
+  auto MI = getModuleImport();
+  if (!MI)
+    return MI.takeError();
+  auto IT = getIncludeTree();
+  if (!IT)
+    return IT.takeError();
+  OS << "(Spurious import) ";
+  if (llvm::Error E = MI->print(OS, Indent, /*End=*/' '))
+    return E;
+  if (llvm::Error E = IT->print(OS, Indent))
+    return E;
+  return llvm::Error::success();
+}
+
 llvm::Error IncludeTree::Node::print(llvm::raw_ostream &OS, unsigned Indent) {
   switch (K) {
   case NodeKind::Tree:
     return getIncludeTree().print(OS, Indent);
+  case NodeKind::ModuleImport:
+    return getModuleImport().print(OS, Indent);
+  case NodeKind::SpuriousImport:
+    return getSpuriousImport().print(OS, Indent);
   }
   llvm_unreachable("unhandled IncludeTree::NodeKind");
+}
+
+llvm::Error IncludeTree::Module::print(llvm::raw_ostream &OS, unsigned Indent) {
+  OS.indent(Indent) << getName();
+  ModuleFlags Flags = getFlags();
+  if (Flags.IsFramework)
+    OS << " (framework)";
+  if (Flags.IsExplicit)
+    OS << " (explicit)";
+  if (Flags.IsExternC)
+    OS << " (extern_c)";
+  if (Flags.IsSystem)
+    OS << " (system)";
+  if (Flags.ModuleMapIsPrivate)
+    OS << " (private)";
+  OS << '\n';
+  auto ExportAs = getExportAsModule();
+  if (!ExportAs.empty())
+    OS << " export_as " << ExportAs << "\n";
+  if (Flags.InferSubmodules) {
+    if (Flags.InferExplicitSubmodules)
+      OS << "  explicit module *";
+    else
+      OS << "  module *";
+    if (Flags.InferExportWildcard)
+      OS << " { export * }";
+    OS << '\n';
+  }
+  auto ExportList = getExports();
+  if (!ExportList)
+    return ExportList.takeError();
+  if (*ExportList)
+    if (llvm::Error E = (*ExportList)->print(OS, Indent + 2))
+      return E;
+  auto LinkLibraries = getLinkLibraries();
+  if (!LinkLibraries)
+    return LinkLibraries.takeError();
+  if (*LinkLibraries)
+    if (llvm::Error E = (*LinkLibraries)->print(OS, Indent + 2))
+      return E;
+  auto Requirements = getRequirements();
+  if (!Requirements)
+    return Requirements.takeError();
+  if (*Requirements)
+    if (llvm::Error E = (*Requirements)->print(OS, Indent + 2))
+      return E;
+  return forEachSubmodule(
+      [&](Module Sub) { return Sub.print(OS, Indent + 2); });
+}
+llvm::Error IncludeTree::Module::ExportList::print(llvm::raw_ostream &OS,
+                                                   unsigned Indent) {
+  if (hasGlobalWildcard())
+    OS.indent(Indent) << "export *\n";
+  return forEachExplicitExport([&](Export E) {
+    OS.indent(Indent) << "export " << E.ModuleName;
+    if (E.Wildcard)
+      OS << ".*";
+    OS << '\n';
+    return llvm::Error::success();
+  });
+}
+
+llvm::Error IncludeTree::Module::LinkLibraryList::print(llvm::raw_ostream &OS,
+                                                        unsigned Indent) {
+  return forEachLinkLibrary([&](LinkLibrary E) {
+    OS.indent(Indent) << "link " << E.Library;
+    if (E.IsFramework)
+      OS << " (framework)";
+    OS << '\n';
+    return llvm::Error::success();
+  });
+}
+
+llvm::Error IncludeTree::Module::RequirementList::print(llvm::raw_ostream &OS,
+                                                        unsigned Indent) {
+  return forEachRequirement([&](Requirement R) {
+    OS.indent(Indent) << "requires ";
+    if (!R.RequiredState)
+      OS << "!";
+    OS << R.FeatureName << '\n';
+    return llvm::Error::success();
+  });
+}
+
+llvm::Error IncludeTree::ModuleMap::print(llvm::raw_ostream &OS,
+                                          unsigned Indent) {
+  return forEachModule([&](Module M) { return M.print(OS, Indent); });
+}
+
+llvm::Expected<IncludeTree::APINotes>
+IncludeTree::APINotes::create(ObjectStore &DB,
+                              ArrayRef<ObjectRef> APINoteList) {
+  assert(APINoteList.size() < 2 && "Too many APINotes added");
+  return IncludeTreeBase::create(DB, APINoteList, {});
+}
+
+llvm::Expected<IncludeTree::APINotes>
+IncludeTree::APINotes::get(ObjectStore &DB, ObjectRef Ref) {
+  auto Node = DB.getProxy(Ref);
+  if (!Node)
+    return Node.takeError();
+  if (!isValid(*Node))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "not an APINodes node kind");
+  return APINotes(std::move(*Node));
+}
+
+llvm::Error IncludeTree::APINotes::print(llvm::raw_ostream &OS,
+                                         unsigned Indent) {
+  return forEachReference([&](ObjectRef Ref) -> llvm::Error {
+    auto Node = getCAS().getProxy(Ref);
+    if (!Node)
+      return Node.takeError();
+    OS.indent(Indent) << Node->getID() << "\n";
+    OS.indent(Indent) << Node->getData() << "\n";
+    return llvm::Error::success();
+  });
+}
+
+llvm::Error IncludeTree::APINotes::forEachAPINotes(
+    llvm::function_ref<llvm::Error(StringRef)> CB) {
+  return forEachReference([&](ObjectRef Ref) {
+    auto N = getCAS().getProxy(Ref);
+    if (!N)
+      return N.takeError();
+    return CB(N->getData());
+  });
 }
 
 llvm::Error IncludeTreeRoot::print(llvm::raw_ostream &OS, unsigned Indent) {
@@ -432,10 +969,26 @@ llvm::Error IncludeTreeRoot::print(llvm::raw_ostream &OS, unsigned Indent) {
     return E;
   if (llvm::Error E = MainTree->print(OS.indent(Indent), Indent))
     return E;
+  std::optional<IncludeTree::ModuleMap> ModuleMap;
+  if (llvm::Error E = getModuleMap().moveInto(ModuleMap))
+    return E;
+  if (ModuleMap) {
+    OS.indent(Indent) << "Module Map:\n";
+    if (llvm::Error E = ModuleMap->print(OS, Indent))
+      return E;
+  }
   OS.indent(Indent) << "Files:\n";
   std::optional<IncludeTree::FileList> List;
   if (llvm::Error E = getFileList().moveInto(List))
     return E;
+  std::optional<IncludeTree::APINotes> APINotes;
+  if (llvm::Error E = getAPINotes().moveInto(APINotes))
+    return E;
+  if (APINotes) {
+    OS.indent(Indent) << "APINotes:\n";
+    if (llvm::Error E = APINotes->print(OS, Indent))
+      return E;
+  }
   return List->print(OS, Indent);
 }
 

@@ -144,6 +144,10 @@ public:
     switch (Node->getKind()) {
     case cas::IncludeTree::NodeKind::Tree:
       return MakeIncludeTree(Node->getIncludeTree());
+    case cas::IncludeTree::NodeKind::ModuleImport:
+    case cas::IncludeTree::NodeKind::SpuriousImport:
+      return reportError(llvm::createStringError(
+          "module imports in an include-tree are not supported"));
     }
     llvm_unreachable("unhandled IncludeTree::NodeKind");
   }
