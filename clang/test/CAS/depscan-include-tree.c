@@ -14,6 +14,8 @@
 // CHECK: "-fcas-path" "[[PREFIX]]/cas"
 // CHECK: "-fcas-include-tree"
 // CHECK: "-isysroot"
+// CHECK: "-fmodule-format=obj"
+// CHECK: "-dwarf-ext-refs"
 // CHECK: "-coverage-data-file=[[PREFIX]]/t.gcda"
 // CHECK: "-coverage-notes-file=[[PREFIX]]/t.gcno"
 // SHOULD-NOT: "-I"

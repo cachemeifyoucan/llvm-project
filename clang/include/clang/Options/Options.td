@@ -9475,6 +9475,11 @@ defm cache_disable_replay : BoolFOption<"cache-disable-replay",
     PosFlag<SetTrue, [], [ClangOption], "Disable replaying a cached compile job">,
     NegFlag<SetFalse>>;
 
+defm include_tree_preserve_pch_path : BoolFOption<"include-tree-preserve-pch-path",
+    FrontendOpts<"IncludeTreePreservePCHPath">, DefaultFalse,
+    PosFlag<SetTrue, [], [], "Keep the original PCH path in include-tree rather than canonicalizing">,
+    NegFlag<SetFalse>>;
+
 } // let Visibility = [CC1Option]
 
 def sycl_std_EQ : Joined<["-"], "sycl-std=">, Group<sycl_Group>,

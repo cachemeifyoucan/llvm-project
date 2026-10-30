@@ -99,6 +99,8 @@ void dependencies::configureInvocationForCaching(CowCompilerInvocation &CI,
     HSOpts.ResourceDir = std::move(OriginalHSOpts.ResourceDir);
     // Preserve fmodule-file options.
     HSOpts.PrebuiltModuleFiles = std::move(OriginalHSOpts.PrebuiltModuleFiles);
+    // Preserve -gmodules (see below for caveats).
+    HSOpts.ModuleFormat = OriginalHSOpts.ModuleFormat;
     HSOpts.UseBuiltinIncludes = false;
     HSOpts.UseStandardSystemIncludes = false;
     HSOpts.UseStandardCXXIncludes = false;
@@ -117,11 +119,6 @@ void dependencies::configureInvocationForCaching(CowCompilerInvocation &CI,
       PPOpts.MacroIncludes.clear();
       PPOpts.Includes.clear();
     }
-    // Disable `-gmodules` to avoid debug info referencing a non-existent PCH
-    // filename.
-    // FIXME: we should also allow -gmodules if there is no PCH involved.
-    CodeGenOpts.DebugTypeExtRefs = false;
-    HSOpts.ModuleFormat = "raw";
     // Clear APINotes options.
     CI.getMutAPINotesOpts().ModuleSearchPaths = {};
 

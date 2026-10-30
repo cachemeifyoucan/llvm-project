@@ -3668,6 +3668,11 @@ llvm::DIModule *CGDebugInfo::getOrCreateModuleRef(ASTSourceDescriptor Mod,
         PCM = Mod.getPath();
     }
     llvm::sys::path::append(PCM, Mod.getASTFile());
+
+    // If module file has CASID, use CASID as PCM path.
+    if (!Mod.getCASID().empty())
+      PCM = Mod.getCASID();
+
     DIB.createCompileUnit(
         TheCU->getSourceLanguage(),
         // TODO: Support "Source" from external AST providers?
@@ -3681,8 +3686,11 @@ llvm::DIModule *CGDebugInfo::getOrCreateModuleRef(ASTSourceDescriptor Mod,
       IsRootModule ? nullptr
                    : getOrCreateModuleRef(ASTSourceDescriptor(*M->Parent),
                                           CreateSkeletonCU);
-  StringRef IncludePath = Mod.getPath();
-  if (!CGM.getCodeGenOpts().DebugRecordSysroot) {
+
+  // If Module is from CAS, there is not a valid include path for that module.
+  bool HasCASID = !Mod.getCASID().empty();
+  StringRef IncludePath = HasCASID ? "" : Mod.getPath();
+  if (!CGM.getCodeGenOpts().DebugRecordSysroot && !HasCASID) {
     StringRef Sysroot = CGM.getHeaderSearchOpts().Sysroot;
     if (!Sysroot.empty() && IncludePath.starts_with(Sysroot))
       IncludePath = "";

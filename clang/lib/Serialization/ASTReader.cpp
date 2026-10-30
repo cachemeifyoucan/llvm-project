@@ -10334,7 +10334,7 @@ std::optional<ASTSourceDescriptor> ASTReader::getSourceDescriptor(unsigned ID) {
     StringRef FileName = llvm::sys::path::filename(MF.FileName);
     return ASTSourceDescriptor(ModuleName,
                                llvm::sys::path::parent_path(MF.FileName),
-                               FileName, MF.Signature);
+                               FileName, MF.Signature, MF.CASID);
   }
   return std::nullopt;
 }

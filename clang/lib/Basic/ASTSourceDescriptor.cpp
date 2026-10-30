@@ -21,6 +21,8 @@ ASTSourceDescriptor::ASTSourceDescriptor(Module &M)
     Path = M.Directory->getName();
   if (auto FileKey = M.getASTFileName())
     ASTFile = FileKey->str();
+  if (M.getCASID())
+    CASID = *M.getCASID();
 }
 
 std::string ASTSourceDescriptor::getModuleName() const {
