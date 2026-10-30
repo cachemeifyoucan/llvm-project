@@ -1071,13 +1071,15 @@ public:
 
   void setExternalSemaSource(IntrusiveRefCntPtr<ExternalSemaSource> ESS);
 
-  /// Adds a module to the \c InMemoryModuleCache at \p Path by retrieving the
-  /// pcm output from the \c ActionCache for \p CacheKey.
+  /// Adds a module to the \c InMemoryModuleCache at \p Path, loading the pcm
+  /// from the CAS.
   ///
+  /// \param CASID if \p IsKey, the \c ActionCache key of the compile job that
+  /// produced the pcm; otherwise the CAS ID of the pcm itself.
   /// \param Provider description of what provided this cache key, e.g.
   /// "-fmodule-file-cache-key", or an imported pcm file. Used in diagnostics.
   ///
-  /// \returns true on failure.
+  /// \returns true on failure, or if a different pcm is already at \p Path.
   bool addCachedModuleFile(StringRef Path, StringRef CASID, StringRef Provider,
                            bool IsKey);
 
