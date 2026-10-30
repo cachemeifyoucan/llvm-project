@@ -931,8 +931,6 @@ ModuleDepCollector::handleTopLevelModule(serialization::ModuleFile *MF) {
       MD.ModuleCacheKey = Key->toString();
   }
 
-  MD.IgnoreCWD = IgnoreCWD;
-
   // Check provided input paths from the invocation for determining
   // IsInStableDirectories.
   if (MD.IsInStableDirectories)

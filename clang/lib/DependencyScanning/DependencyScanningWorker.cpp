@@ -1312,11 +1312,6 @@ void DependencyScanningWorker::computeDependenciesFromCompilerInvocation(
   Frontend.OutputFile = "/dev/null";
   Frontend.DisableFree = false;
 
-  // // Reset dependency options.
-  // Dependencies = DependencyOutputOptions();
-  // Dependencies.IncludeSystemHeaders = true;
-  // Dependencies.OutputFile = "/dev/null";
-
   // Make the output file path absolute relative to WorkingDirectory.
   std::string &DepFile = Invocation->getDependencyOutputOpts().OutputFile;
   if (!DepFile.empty() && !llvm::sys::path::is_absolute(DepFile)) {
