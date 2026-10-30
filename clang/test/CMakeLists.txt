@@ -165,6 +165,7 @@ if( NOT CLANG_BUILT_STANDALONE )
   list(APPEND CLANG_TEST_DEPS
     llvm-config
     FileCheck count not
+    dsymutil
     llc
     llvm-ar
     llvm-as

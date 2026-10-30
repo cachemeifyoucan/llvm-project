@@ -5,6 +5,7 @@
 // RUN: split-file %s %t
 // RUN: sed "s|DIR|%/t|g" %t/cdb.json.template > %t/cdb.json
 // RUN: sed "s|DIR|%/t|g" %t/cdb_pch.json.template > %t/cdb_pch.json
+// RUN: sed "s|DIR|%/t|g" %t/cas-config.template > %t/.cas-config
 
 /// Scan PCH
 // RUN: clang-scan-deps -compilation-database %t/cdb_pch.json \
@@ -40,6 +41,21 @@
 // OBJECT-DWARF: DW_AT_dwo_name    ("llvmcas://
 // OBJECT-DWARF-NOT: DW_AT_LLVM_include_path
 
+/// Check debug info is correct.
+// RUN: %clang %t/tu.o -o %t/a.out
+// RUN: dsymutil --linker classic -cas %t/cas %t/a.out -o %t/a.dSYM 2>&1 | FileCheck %s --check-prefix=WARN --allow-empty
+// RUN: dsymutil --linker classic %t/a.out -o %t/a2.dSYM 2>&1 | FileCheck %s --check-prefix=WARN --allow-empty
+// WARN-NOT: warning:
+
+// RUN: echo "bad" > %t/.cas-config
+// RUN: dsymutil --linker classic -cas %t/cas-empty %t/a.out -o %t/a3.dSYM 2>&1 | FileCheck %s --check-prefix=WARN-CAS --check-prefix=WARN-FILE
+// WARN-CAS: warning: failed to load CAS object
+// RUN: dsymutil --linker classic %t/a.out -o %t/a4.dSYM 2>&1 | FileCheck %s --check-prefix=WARN-FILE
+// WARN-FILE: warning:
+// WARN-FILE-SAME: No such file or directory
+
+// RUN: llvm-dwarfdump --debug-info %t/a.dSYM | FileCheck %s --check-prefix=DWARF
+
 /// Check module in a different directory and compare output.
 // RUN: clang-scan-deps -compilation-database %t/cdb_pch.json \
 // RUN:   -cas-path %t/cas -module-files-dir %t/outputs-2 \
@@ -63,6 +79,40 @@
 /// Diff all outputs
 // RUN: diff %t/prefix.h.pch %t/prefix_2.pch
 // RUN: diff %t/tu.o %t/tu_2.o
+
+// Check all the types are available
+// DWARF: DW_TAG_compile_unit
+// DWARF: DW_TAG_module
+// DWARF-NEXT: DW_AT_name      ("Top")
+// DWARF: DW_TAG_structure_type
+// DWARF-NEXT: DW_AT_name    ("Top")
+// DWARF: DW_TAG_compile_unit
+// DWARF: DW_TAG_module
+// DWARF-NEXT: DW_AT_name      ("Left")
+// DWARF: DW_TAG_structure_type
+// DWARF-NEXT: DW_AT_name    ("Left")
+// DWARF: DW_TAG_member
+// DWARF-NEXT: DW_AT_name  ("top")
+// DWARF-NEXT: DW_AT_type
+// DWARF-SAME: "Top::Top"
+// DWARF: DW_TAG_compile_unit
+// DWARF: DW_TAG_module
+// DWARF-NEXT: DW_AT_name      ("Right")
+// DWARF: DW_TAG_structure_type
+// DWARF-NEXT: DW_AT_name    ("Right")
+// DWARF: DW_TAG_member
+// DWARF-NEXT: DW_AT_name  ("top")
+// DWARF-NEXT: DW_AT_type
+// DWARF-SAME: "Top::Top"
+// DWARF: DW_TAG_compile_unit
+// DWARF: DW_TAG_module
+// DWARF: DW_TAG_structure_type
+// DWARF-NEXT: DW_AT_name    ("Prefix")
+// DWARF: DW_TAG_member
+// DWARF-NEXT: DW_AT_name  ("top")
+// DWARF-NEXT: DW_AT_type
+// DWARF-SAME: "Top::Top"
+
 
 // CHECK:      {
 // CHECK-NEXT:  "modules": [
@@ -185,3 +235,7 @@ int main(void) {
   return 0;
 }
 
+//--- cas-config.template
+{
+  "CASPath": "DIR/cas"
+}
