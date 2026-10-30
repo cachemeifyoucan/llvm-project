@@ -267,13 +267,6 @@ public:
   /// AST file imported by this AST file.
   virtual void visitImport(StringRef ModuleName, StringRef Filename) {}
 
-  /// Called for each CAS filesystem root ID.
-  ///
-  /// \returns true to indicate \p RootID is invalid, or false otherwise.
-  virtual bool readCASFileSystemRootID(StringRef RootID, bool Complain) {
-    return false;
-  }
-
   /// Called for each module cache key.
   ///
   /// \returns true to indicate the key cannot be loaded.
@@ -333,7 +326,6 @@ public:
                        bool DirectlyImported) override;
   bool visitInputFile(StringRef Filename, bool isSystem,
                       bool isOverridden, bool isExplicitModule) override;
-  bool readCASFileSystemRootID(StringRef RootID, bool Complain) override;
   bool readModuleCacheKey(StringRef ModuleName, StringRef Filename,
                           StringRef CacheKey) override;
   void readModuleFileExtension(

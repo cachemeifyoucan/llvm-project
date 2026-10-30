@@ -268,11 +268,6 @@ bool ChainedASTReaderListener::visitInputFile(StringRef Filename,
                                        isExplicitModule);
   return Continue;
 }
-bool ChainedASTReaderListener::readCASFileSystemRootID(StringRef RootID,
-                                                       bool Complain) {
-  return First->readCASFileSystemRootID(RootID, Complain) ||
-         Second->readCASFileSystemRootID(RootID, Complain);
-}
 bool ChainedASTReaderListener::readModuleCacheKey(StringRef ModuleName,
                                                   StringRef Filename,
                                                   StringRef CacheKey) {
