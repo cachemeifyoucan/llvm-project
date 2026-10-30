@@ -8,8 +8,11 @@
 
 #include "llvm/CAS/CASConfiguration.h"
 #include "CASTestConfig.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/CAS/ActionCache.h"
 #include "llvm/CAS/ObjectStore.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Testing/Support/Error.h"
 #include "llvm/Testing/Support/SupportHelpers.h"
 #include "gtest/gtest.h"
@@ -104,4 +107,91 @@ TEST(CASConfigurationTest, resolveAutoPath) {
   Config.CASPath = "/some/path";
   ASSERT_THAT_ERROR(Config.getResolvedCASPath(Resolved), Succeeded());
   EXPECT_EQ(Resolved, "/some/path");
+}
+
+TEST(CASConfigurationTest, roundTrips) {
+  auto roundTripConfig = [](CASConfiguration &Config) {
+    std::string Serialized;
+    raw_string_ostream OS(Serialized);
+    Config.writeConfigurationFile(OS);
+
+    std::optional<CASConfiguration> NewConfig;
+    ASSERT_THAT_ERROR(
+        CASConfiguration::createFromConfig(Serialized).moveInto(NewConfig),
+        Succeeded());
+    EXPECT_EQ(Config, *NewConfig);
+  };
+
+  CASConfiguration Config;
+  roundTripConfig(Config);
+
+  Config.CASPath = "/tmp";
+  roundTripConfig(Config);
+
+  Config.PluginPath = "/test.plug";
+  roundTripConfig(Config);
+
+  Config.PluginOptions.emplace_back("a", "b");
+  roundTripConfig(Config);
+
+  Config.PluginOptions.emplace_back("c", "d");
+  roundTripConfig(Config);
+}
+
+TEST(CASConfigurationTest, configFileSearch) {
+  // /a/b/c
+  SmallString<261> PathToC = sys::path::get_separator();
+  sys::path::append(PathToC, "a", "b", "c");
+  // /a/b/c/d
+  SmallString<261> PathToD = PathToC;
+  sys::path::append(PathToD, "d");
+  // /a/b/c/d/e
+  SmallString<261> PathToE = PathToD;
+  sys::path::append(PathToE, "e");
+  // /a/b/c/.cas-config
+  SmallString<261> PathToCConfig = PathToC;
+  sys::path::append(PathToCConfig, ".cas-config");
+  // /a/b/c/d/.cas-config
+  SmallString<261> PathToDConfig = PathToD;
+  sys::path::append(PathToDConfig, ".cas-config");
+
+  auto VFS = makeIntrusiveRefCnt<vfs::InMemoryFileSystem>();
+  ASSERT_FALSE(
+      CASConfiguration::createFromSearchConfigFile(PathToE.str(), VFS));
+
+  // Add an empty file.
+  VFS->addFile(PathToCConfig.str(), 0,
+               llvm::MemoryBuffer::getMemBufferCopy(""));
+  ASSERT_FALSE(
+      CASConfiguration::createFromSearchConfigFile(PathToE.str(), VFS));
+
+  VFS->addFile(PathToDConfig.str(), 0,
+#ifndef _WIN32
+               llvm::MemoryBuffer::getMemBufferCopy("{\"CASPath\": \"/tmp\"}"));
+#else
+               llvm::MemoryBuffer::getMemBufferCopy(
+                   "{\"CASPath\": \"\\\\tmp\"}"));
+#endif
+
+  CASConfiguration Config;
+  SmallString<261> CASPath = sys::path::get_separator();
+  sys::path::append(CASPath, "tmp");
+  Config.CASPath = CASPath.str();
+  auto NewConfig =
+      CASConfiguration::createFromSearchConfigFile(PathToE.str(), VFS);
+  ASSERT_TRUE(NewConfig);
+  EXPECT_EQ(NewConfig->first, PathToDConfig.str());
+  EXPECT_EQ(Config, NewConfig->second);
+}
+
+TEST(CASConfigurationTest, denseMapKey) {
+  CASConfiguration B, C;
+  B.CASPath = "/tmp";
+  C.PluginPath = "/test.plug";
+  DenseSet<CASConfiguration> Set;
+  EXPECT_TRUE(Set.insert(B).second);
+  EXPECT_TRUE(Set.insert(C).second);
+  EXPECT_FALSE(Set.insert(B).second);
+  EXPECT_TRUE(Set.contains(B));
+  EXPECT_TRUE(Set.contains(C));
 }

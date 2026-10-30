@@ -14,9 +14,12 @@
 #ifndef LLVM_CAS_CASCONFIGURATION_H
 #define LLVM_CAS_CASCONFIGURATION_H
 
+#include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/VirtualFileSystem.h"
 #include <memory>
 #include <string>
 #include <utility>
@@ -57,13 +60,57 @@ public:
                                     std::shared_ptr<llvm::cas::ActionCache>>>
   createDatabases() const;
 
+  /// Write CAS configuration file.
+  LLVM_ABI void writeConfigurationFile(raw_ostream &OS) const;
+
+  /// Create CASConfiguration from config file content.
+  LLVM_ABI static llvm::Expected<CASConfiguration>
+  createFromConfig(llvm::StringRef Content);
+
+  /// Create CASConfiguration from recurively search config file from a path.
+  ///
+  /// Returns the path to configuration file and its corresponding
+  /// CASConfiguration.
+  LLVM_ABI static std::optional<std::pair<std::string, CASConfiguration>>
+  createFromSearchConfigFile(
+      StringRef Path,
+      llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS = nullptr);
+
   /// Get resolved CASPath.
   LLVM_ABI Error getResolvedCASPath(llvm::SmallVectorImpl<char> &Result) const;
 
+  /// DenseMap support \{
+  static cas::CASConfiguration getDenseMapEmptyKey() { return {}; }
+
+  static cas::CASConfiguration getDenseMapTombstoneKey() {
+    return {"$", "$", {}};
+  }
+  unsigned getHashValue() const {
+    return detail::combineHashValue(
+        DenseMapInfo<StringRef>::getHashValue(StringRef(CASPath)),
+        DenseMapInfo<StringRef>::getHashValue(StringRef(PluginPath)));
+  }
+  /// \}
   operator bool() const { return !CASPath.empty() || !PluginPath.empty(); }
 };
 
 } // namespace cas
+
+template <> struct DenseMapInfo<cas::CASConfiguration> {
+  static cas::CASConfiguration getEmptyKey() {
+    return cas::CASConfiguration::getDenseMapEmptyKey();
+  }
+
+  static unsigned getHashValue(const cas::CASConfiguration &config) {
+    return config.getHashValue();
+  }
+
+  static bool isEqual(const cas::CASConfiguration &LHS,
+                      const cas::CASConfiguration &RHS) {
+    return LHS == RHS;
+  }
+};
+
 } // namespace llvm
 
 #endif // LLVM_CAS_CASCONFIGURATION_H
