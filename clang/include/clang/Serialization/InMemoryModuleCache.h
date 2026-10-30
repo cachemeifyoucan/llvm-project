@@ -47,9 +47,6 @@ class InMemoryModuleCache : public llvm::RefCountedBase<InMemoryModuleCache> {
     bool IsFinal = false;
 
     PCM() = default;
-    PCM(std::unique_ptr<llvm::MemoryBuffer> Buffer)
-        : Buffer(std::move(Buffer)) {}
-
     PCM(std::unique_ptr<llvm::MemoryBuffer> Buffer, off_t Size, time_t ModTime,
         llvm::StringRef CASID)
         : Buffer(std::move(Buffer)), Size(Size), ModTime(ModTime),
