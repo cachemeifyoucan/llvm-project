@@ -14,6 +14,7 @@
 #include "clang/Basic/AttributeCommonInfo.h"
 #include "clang/Basic/Attributes.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/DiagnosticFrontend.h"
 #include "clang/Basic/DirectoryEntry.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/IdentifierTable.h"
@@ -2246,10 +2247,98 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
       InclusionCallback(SourceMgr.getFileEntryRefForID(File->FID), nullptr);
       EnterSourceFile(File->FID, nullptr, FilenameTok.getLocation(),
                       /*IsFirstIncludeOfFile*/ true);
+
+      if (Module *SM = File->Submodule) {
+        assert(!CurLexerSubmodule &&
+               "should not have marked this as a module yet");
+        CurLexerSubmodule = SM;
+        EnterSubmodule(SM, EndLoc, /*ForPragma=*/false);
+        EnterAnnotationToken(SourceRange(HashLoc, EndLoc),
+                             tok::annot_module_begin, SM);
+      }
     };
 
+    auto CheckLoadResult = [&](ModuleLoadResult Result) {
+      if (Result)
+        return true;
+      assert(hadModuleLoaderFatalFailure() && "unexpected failure kind");
+      if (hadModuleLoaderFatalFailure()) {
+        IncludeTok.setKind(tok::eof);
+        CurLexer->cutOffLexing();
+      }
+      return false;
+    };
+
+    auto LoadModule = [&](const PPCachedActions::IncludeModule *Import) {
+      auto Imported = TheModuleLoader.loadModule(
+          IncludeTok.getLocation(), ArrayRef(Import->ImportPath).take_front(),
+          Module::Hidden, /*IsInclusionDirective=*/true);
+      if (!CheckLoadResult(Imported))
+        return;
+
+      auto Path = Import->ImportPath;
+      std::string PathStr = Path.front().getIdentifierInfo()->getName().str();
+      for (unsigned I = 1; I != Path.size(); ++I)
+        PathStr += ("." + Path[I].getIdentifierInfo()->getName()).str();
+
+      getDiagnostics().Report(IncludeTok.getLocation(),
+                              diag::warn_missing_submodule)
+          << PathStr
+          << SourceRange(Path.front().getLoc(), Path.back().getLoc());
+    };
+
+    auto HandleIncludeMod = [&](const PPCachedActions::IncludeModule *Import) {
+      ModuleLoadResult Imported;
+      if (Import->VisibilityOnly) {
+        ModuleMap &MMap = getHeaderSearchInfo().getModuleMap();
+        Module *M = nullptr;
+        for (auto &NameLoc : Import->ImportPath) {
+          M = MMap.lookupModuleQualified(NameLoc.getIdentifierInfo()->getName(),
+                                         M);
+          if (!M)
+            break;
+        }
+        if (!M) {
+          Diags->Report(diag::err_pp_missing_module_include_tree)
+              << getLangOpts().CurrentModule;
+
+          return;
+        }
+        Imported = M;
+      } else {
+        Imported = TheModuleLoader.loadModule(
+            IncludeTok.getLocation(), Import->ImportPath, Module::Hidden,
+            /*IsIncludeDirective=*/true);
+        if (!CheckLoadResult(Imported))
+          return;
+        // PPCallback for IncludeDirective. Using the AST file as the FileEntry
+        // in the callback to indicate this is not a missing header. Note this
+        // is not the same behavior as non-include-tree build where the
+        // FileEntry is for the header file.
+        // FIXME: Need to clarify what `File` means in the callback, and if that
+        // can be the module file entry instead of header file entry.
+        Module *M = Imported;
+        auto FE = FileMgr.getVirtualFileRef(*M->getASTFileName(), 0, 0);
+        InclusionCallback(FE, Imported);
+      }
+
+      makeModuleVisible(Imported, EndLoc);
+      if (IncludeTok.getIdentifierInfo()->getPPKeywordID() !=
+          tok::pp___include_macros)
+        EnterAnnotationToken(SourceRange(HashLoc, EndLoc),
+                             tok::annot_module_include, Imported);
+    };
+
+    if (auto *SpuriousImport =
+            std::get_if<PPCachedActions::SpuriousImport>(&Include)) {
+      LoadModule(&SpuriousImport->IM);
+      HandleIncludeFile(&SpuriousImport->IF);
+      return;
+    }
     if (auto *File = std::get_if<PPCachedActions::IncludeFile>(&Include))
       return HandleIncludeFile(File);
+    if (auto *Import = std::get_if<PPCachedActions::IncludeModule>(&Include))
+      return HandleIncludeMod(Import);
     assert(std::holds_alternative<std::monostate>(Include));
     // FIXME: Report \p Callbacks->FileSkipped? Note that it currently
     // requires the resolved FileEntry for this particular #include.

@@ -90,7 +90,7 @@ public:
     return IncludeInfo.Tree.getCheckResult(Index);
   }
 
-  std::variant<std::monostate, IncludeFile>
+  std::variant<std::monostate, IncludeFile, IncludeModule, SpuriousImport>
   handleIncludeDirective(Preprocessor &PP, SourceLocation IncludeLoc,
                          SourceLocation AfterDirectiveLoc) override {
     if (HasCASErrorOccurred)
@@ -138,12 +138,16 @@ public:
       IncludeStack.push_back(
           {std::move(EnteredTree), SM.getLocForStartOfFile(FID)});
 
-      return IncludeFile{FID};
+      return IncludeFile{FID, nullptr};
     };
 
     switch (Node->getKind()) {
-    case cas::IncludeTree::NodeKind::Tree:
-      return MakeIncludeTree(Node->getIncludeTree());
+    case cas::IncludeTree::NodeKind::Tree: {
+      auto IncludeTree = MakeIncludeTree(Node->getIncludeTree());
+      if (std::holds_alternative<std::monostate>(IncludeTree))
+        return std::monostate{};
+      return std::get<IncludeFile>(IncludeTree);
+    }
     case cas::IncludeTree::NodeKind::ModuleImport:
     case cas::IncludeTree::NodeKind::SpuriousImport:
       return reportError(llvm::createStringError(

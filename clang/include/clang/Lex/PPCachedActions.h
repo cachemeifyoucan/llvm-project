@@ -14,11 +14,15 @@
 #ifndef LLVM_CLANG_LEX_PPCACHEDACTIONS_H
 #define LLVM_CLANG_LEX_PPCACHEDACTIONS_H
 
+#include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/SourceLocation.h"
+#include "llvm/ADT/SmallVector.h"
 #include <variant>
 
 namespace clang {
 
+class IdentifierInfo;
+class Module;
 class Preprocessor;
 
 /// This interface provides a way to override the actions of the preprocessor as
@@ -32,6 +36,19 @@ public:
   /// The file that is included by an \c #include directive.
   struct IncludeFile {
     FileID FID;
+    Module *Submodule;
+  };
+  /// The module that is imported by an \c #include directive or \c \@import.
+  struct IncludeModule {
+    SmallVector<IdentifierLoc, 2> ImportPath;
+    // Whether this module should only be "marked visible" rather than imported.
+    bool VisibilityOnly;
+  };
+  /// The module that is loaded and discarded for an \c #include directive, and
+  /// the file that is included instead.
+  struct SpuriousImport {
+    IncludeModule IM;
+    IncludeFile IF;
   };
 
   virtual ~PPCachedActions() = default;
@@ -43,9 +60,11 @@ public:
   virtual bool evaluateHasInclude(Preprocessor &PP, SourceLocation Loc,
                                   bool IsIncludeNext) = 0;
 
-  /// \returns the file that should be entered for an \c #include directive.
-  /// \c {} indicates that the directive should be skipped.
-  virtual std::variant<std::monostate, IncludeFile>
+  /// \returns the file that should be entered or module that should be imported
+  /// for an \c #include directive. \c {} indicates that the directive
+  /// should be skipped.
+  virtual std::variant<std::monostate, IncludeFile, IncludeModule,
+                       SpuriousImport>
   handleIncludeDirective(Preprocessor &PP, SourceLocation IncludeLoc,
                          SourceLocation AfterDirectiveLoc) = 0;
 
