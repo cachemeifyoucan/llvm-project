@@ -784,8 +784,9 @@ struct AsyncModuleCompile : PPCallbacks {
     IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS =
         llvm::makeIntrusiveRefCnt<DependencyScanningWorkerFilesystem>(
             Service, Service.createVFS());
-    VFS = createVFSFromCompilerInvocation(CI.getInvocation(),
-                                          CI.getDiagnostics(), std::move(VFS));
+    VFS =
+        createVFSFromCompilerInvocation(CI.getInvocation(), CI.getDiagnostics(),
+                                        std::move(VFS), Service.getCAS());
     auto DC = std::make_unique<DiagnosticConsumer>();
     auto MC = makeInProcessModuleCache(Service.getModuleCacheEntries(),
                                        Service.getLogger());
@@ -813,7 +814,15 @@ struct AsyncModuleCompile : PPCallbacks {
         (void)ModCI1->ExecuteAction(Action1);
         // The real scan below.
         ModCI2->getPreprocessorOpts().SingleModuleParseMode = false;
-        GenerateModuleFromModuleMapAction Action2;
+        ModCI2->setGenModuleActionWrapper(
+            [&](const FrontendOptions &,
+                std::unique_ptr<FrontendAction> Wrapped) {
+              return std::make_unique<WrapScanModuleBuildAction>(
+                  std::move(Wrapped), *ModController);
+            });
+        WrapScanModuleBuildAction Action2(
+            std::make_unique<GenerateModuleFromModuleMapAction>(),
+            *ModController);
         (void)ModCI2->ExecuteAction(Action2);
       });
     });
