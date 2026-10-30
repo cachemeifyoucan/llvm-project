@@ -60,7 +60,9 @@ enum class ScanningOptimizations {
   // The build system needs to be aware that the current working
   // directory is ignored. Without a good way of notifying the build
   // system, it is less risky to default to off.
-  Default = All & (~IgnoreCWD)
+  Default = All & (~IgnoreCWD),
+
+  FullIncludeTreeIrrelevant = HeaderSearch | VFS,
 };
 
 struct RegularCompilation {};
@@ -134,11 +136,7 @@ struct DependencyScanningServiceOptions {
 /// is used by the individual dependency scanning workers.
 class DependencyScanningService {
 public:
-  explicit DependencyScanningService(DependencyScanningServiceOptions Opts)
-      : Opts(std::move(Opts)), Logger(this->Opts.LogPath) {
-    ModCacheEntries.ValidateAgainstInvalidatedPaths =
-        this->Opts.ValidateAgainstInvalidatedPaths;
-  }
+  explicit DependencyScanningService(DependencyScanningServiceOptions Opts);
 
   ~DependencyScanningService() {
     if (Opts.FlushModuleCache)

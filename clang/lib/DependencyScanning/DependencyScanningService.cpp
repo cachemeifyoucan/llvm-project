@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/DependencyScanning/DependencyScanningService.h"
+#include "clang/Basic/BitmaskEnum.h"
 #include "llvm/CAS/ActionCache.h"
 #include "llvm/CAS/CASProvidingFileSystem.h"
 #include "llvm/CAS/ObjectStore.h"
@@ -45,6 +46,18 @@ DependencyScanningServiceOptions::DependencyScanningServiceOptions()
     : MakeVFS([] { return llvm::vfs::createPhysicalFileSystem(); }),
       BuildSessionTimestamp(
           llvm::sys::toTimeT(std::chrono::system_clock::now())) {}
+
+DependencyScanningService::DependencyScanningService(
+    DependencyScanningServiceOptions OptsArg)
+    : Opts(std::move(OptsArg)), Logger(this->Opts.LogPath) {
+  ModCacheEntries.ValidateAgainstInvalidatedPaths =
+      Opts.ValidateAgainstInvalidatedPaths;
+  // Include-tree compilation completely subsumes header search and VFS
+  // optimizations due to how it works. Disable these optimizations so we're not
+  // doing unneeded work.
+  if (std::holds_alternative<IncludeTreeCompilation>(Opts.Compilation))
+    Opts.OptimizeArgs &= ~ScanningOptimizations::FullIncludeTreeIrrelevant;
+}
 
 CASOptions DependencyScanningService::getCASOpts() const {
   if (auto *IncludeTree =

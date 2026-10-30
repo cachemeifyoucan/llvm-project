@@ -6,6 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/APINotes/APINotesManager.h"
+#include "clang/APINotes/APINotesReader.h"
 #include "clang/Basic/DiagnosticCAS.h"
 #include "clang/CAS/IncludeTree.h"
 #include "clang/DependencyScanning/CachingActions.h"
@@ -13,6 +15,8 @@
 #include "clang/Frontend/CompileJobCacheKey.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/Preprocessor.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/CAS/ObjectStore.h"
 #include "llvm/Support/PrefixMapper.h"
 #include "llvm/Support/PrefixMappingFileSystem.h"
@@ -44,6 +48,12 @@ private:
   std::optional<std::string>
   getCacheKey(const CompilerInvocation &NewInvocation) override;
 
+  bool initializeModuleBuild(CompilerInstance &ModuleScanInstance) override;
+  bool finalizeModuleBuild(CompilerInstance &ModuleScanInstance) override;
+  bool finalizeModuleInvocation(CompilerInstance &ScanInstance,
+                                CowCompilerInvocation &CI,
+                                const ModuleDeps &MD) override;
+
 private:
   IncludeTreeBuilder &current() {
     assert(!BuilderStack.empty());
@@ -61,7 +71,9 @@ private:
   llvm::StringMap<std::string> OutputToCacheKey;
 };
 
-/// Callbacks for building an include-tree for a given translation unit.
+/// Callbacks for building an include-tree for a given translation unit or
+/// module. The \c IncludeTreeActionController is responsiblee for pushing and
+/// popping builders from the stack as modules are required.
 class IncludeTreeBuilder {
 public:
   IncludeTreeBuilder(cas::ObjectStore &DB, llvm::PrefixMapper &PrefixMapper)
@@ -78,11 +90,19 @@ public:
 
   void handleHasIncludeCheck(Preprocessor &PP, bool Result);
 
+  void moduleImport(Preprocessor &PP, const Module *M, SourceLocation EndLoc);
+
+  void enteredSubmodule(Preprocessor &PP, Module *M, SourceLocation ImportLoc,
+                        bool ForPragma);
+  void exitedSubmodule(Preprocessor &PP, Module *M, SourceLocation ImportLoc,
+                       bool ForPragma);
+
 private:
   struct FilePPState {
     SrcMgr::CharacteristicKind FileCharacteristic;
     cas::ObjectRef File;
     SmallVector<cas::IncludeTree::IncludeInfo, 6> Includes;
+    std::optional<cas::ObjectRef> SubmoduleName;
     llvm::SmallBitVector HasIncludeChecks;
   };
 
@@ -114,6 +134,11 @@ private:
   SmallVector<cas::IncludeTree::FileList::FileEntry> IncludedFiles;
   SmallVector<cas::ObjectRef> IncludedFileLists;
   std::optional<cas::ObjectRef> PredefinesBufferRef;
+  std::optional<cas::ObjectRef> ModuleIncludesBufferRef;
+  std::optional<cas::ObjectRef> ModuleMapRef;
+  std::optional<cas::ObjectRef> APINotesRef;
+  /// Top-level modules of the submodule names recorded in the include-tree.
+  llvm::SmallSetVector<Module *, 2> EnteredModules;
   SmallVector<FilePPState> IncludeStack;
   llvm::DenseMap<const FileEntry *, std::optional<cas::ObjectRef>>
       ObjectForFile;
@@ -177,6 +202,79 @@ public:
                   SrcMgr::CharacteristicKind FileType) override {
     Builder.handleHasIncludeCheck(PP, File.has_value());
   }
+
+  void InclusionDirective(SourceLocation HashLoc, const Token &IncludeTok,
+                          StringRef FileName, bool IsAngled,
+                          CharSourceRange FilenameRange,
+                          OptionalFileEntryRef File, StringRef SearchPath,
+                          StringRef RelativePath, const Module *SuggestedModule,
+                          bool ModuleImported,
+                          SrcMgr::CharacteristicKind FileType) override {
+    // File includes are handled by LexedFileChanged.
+    if (!ModuleImported)
+      return;
+
+    // Calculate EndLoc for the directive
+    // FIXME: pass EndLoc through PPCallbacks; it is already calculated
+    SourceManager &SM = PP.getSourceManager();
+    std::pair<FileID, unsigned> LocInfo = SM.getDecomposedExpansionLoc(HashLoc);
+    StringRef Buffer = SM.getBufferData(LocInfo.first);
+    Lexer L(SM.getLocForStartOfFile(LocInfo.first), PP.getLangOpts(),
+            Buffer.begin(), Buffer.begin() + LocInfo.second, Buffer.end());
+    L.setParsingPreprocessorDirective(true);
+    Token Tok;
+    do {
+      L.LexFromRawLexer(Tok);
+    } while (!Tok.isOneOf(tok::eod, tok::eof));
+    SourceLocation EndLoc = L.getSourceLocation();
+
+    Builder.moduleImport(PP, SuggestedModule, EndLoc);
+  }
+
+  void EnteredSubmodule(Module *M, SourceLocation ImportLoc,
+                        bool ForPragma) override {
+    Builder.enteredSubmodule(PP, M, ImportLoc, ForPragma);
+  }
+  void LeftSubmodule(Module *M, SourceLocation ImportLoc,
+                     bool ForPragma) override {
+    Builder.exitedSubmodule(PP, M, ImportLoc, ForPragma);
+  }
+};
+
+/// Utility to trigger module lookup in header search for modules loaded via
+/// PCH. This causes dependency scanning via PCH to parse modulemap files at
+/// roughly the same point they would with modulemap files embedded in the pcms,
+/// which is disabled with include-tree modules. Without this, we can fail to
+/// find modules that are in the same directory as a named import, since
+/// it may be skipped during search (see \c loadFrameworkModule).
+///
+/// The specific lookup we do matches what happens in ASTReader for the
+/// MODULE_DIRECTORY record, and ignores the result.
+class LookupPCHModulesListener : public ASTReaderListener {
+public:
+  LookupPCHModulesListener(ASTReader &R) : Reader(R) {}
+
+private:
+  void visitModuleFile(ModuleFileName Filename, serialization::ModuleKind Kind,
+                       bool DirectlyImported) final {
+    // Any prebuilt or explicit modules seen during scanning are "full" modules
+    // rather than implicitly built scanner modules.
+    if (Kind == serialization::MK_PrebuiltModule ||
+        Kind == serialization::MK_ExplicitModule) {
+      serialization::ModuleManager &Manager = Reader.getModuleManager();
+      serialization::ModuleFile *MF = Manager.lookupByFileName(Filename);
+      assert(MF && "module file missing in visitModuleFile");
+      // Match MODULE_DIRECTORY: allow full search and ignore failure to find
+      // the module.
+      HeaderSearch &HS = Reader.getPreprocessor().getHeaderSearchInfo();
+      (void)HS.lookupModule(MF->ModuleName, SourceLocation(),
+                            /*AllowSearch=*/true,
+                            /*AllowExtraModuleMapSearch=*/true);
+    }
+  }
+
+private:
+  ASTReader &Reader;
 };
 } // namespace
 
@@ -219,14 +317,6 @@ void IncludeTreeActionController::initializeScanInvocation(
 
 bool IncludeTreeActionController::initialize(
     CompilerInstance &ScanInstance, CompilerInvocation &NewInvocation) {
-  // Clang modules are not supported by include-tree scanning yet.
-  if (ScanInstance.getLangOpts().Modules ||
-      !NewInvocation.getFrontendOpts().ModuleMapFiles.empty()) {
-    ScanInstance.getDiagnostics().Report(diag::err_cas_depscan_failed)
-        << "include-tree scanning does not support clang modules";
-    return false;
-  }
-
   DepscanPrefixMapping::configurePrefixMapper(NewInvocation, PrefixMapper);
 
   auto ensurePathRemapping = [&]() {
@@ -257,7 +347,9 @@ bool IncludeTreeActionController::initialize(
       [&Builder = current()](Preprocessor &PP) {
         return std::make_unique<IncludeTreePPCallbacks>(Builder, PP);
       },
-      /*CreateASTReaderL=*/nullptr);
+      [](ASTReader &R) {
+        return std::make_unique<LookupPCHModulesListener>(R);
+      });
   ScanInstance.addDependencyCollector(std::move(DC));
 
   return true;
@@ -321,6 +413,71 @@ std::optional<std::string> IncludeTreeActionController::getCacheKey(
   return It->second;
 }
 
+bool IncludeTreeActionController::initializeModuleBuild(
+    CompilerInstance &ModuleScanInstance) {
+  BuilderStack.push_back(
+      std::make_unique<IncludeTreeBuilder>(DB, PrefixMapper));
+
+  // Attach callbacks for the IncludeTree of the module. The preprocessor
+  // does not exist yet, so we need to indirect this via DependencyCollector.
+  auto DC = std::make_shared<AttachOnlyDependencyCollector>(
+      [&Builder = current()](Preprocessor &PP) {
+        return std::make_unique<IncludeTreePPCallbacks>(Builder, PP);
+      },
+      [](ASTReader &R) {
+        return std::make_unique<LookupPCHModulesListener>(R);
+      });
+  ModuleScanInstance.addDependencyCollector(std::move(DC));
+
+  return true;
+}
+
+bool IncludeTreeActionController::finalizeModuleBuild(
+    CompilerInstance &ModuleScanInstance) {
+  // FIXME: the scan invocation is incorrect here; we need the `NewInvocation`
+  // from `finalizeModuleInvocation` to finish the tree.
+  resetBenignCodeGenOptions(
+      frontend::GenerateModule,
+      ModuleScanInstance.getInvocation().getLangOpts(),
+      ModuleScanInstance.getInvocation().getCodeGenOpts());
+  auto Builder = BuilderStack.pop_back_val();
+
+  // If there was an error, bail out early. The state of `Builder` may be
+  // inconsistent since there is no guarantee that exitedInclude or
+  // finalizeModuleBuild have been called for all imports.
+  if (ModuleScanInstance.getDiagnostics().hasUnrecoverableErrorOccurred())
+    return true; // Already reported.
+
+  auto Tree = Builder->finishIncludeTree(ModuleScanInstance,
+                                         ModuleScanInstance.getInvocation());
+  if (Error E = Tree.takeError()) {
+    ModuleScanInstance.getDiagnostics().Report(diag::err_cas_depscan_failed)
+        << std::move(E);
+    return false;
+  }
+
+  ModuleScanInstance.getPreprocessor().setCASIncludeTreeID(
+      Tree->getID().toString());
+
+  return true;
+}
+
+bool IncludeTreeActionController::finalizeModuleInvocation(
+    CompilerInstance &ScanInstance, CowCompilerInvocation &CowCI,
+    const ModuleDeps &MD) {
+  if (!MD.IncludeTreeID) {
+    ScanInstance.getDiagnostics().Report(diag::err_cas_depscan_failed)
+        << llvm::format("missing include-tree for module '%s'",
+                        MD.ID.ModuleName.c_str());
+    return false;
+  }
+
+  configureInvocationForCaching(CowCI, CASOpts, *MD.IncludeTreeID,
+                                CachingInputKind::IncludeTree);
+
+  return true;
+}
+
 void IncludeTreeBuilder::enteredInclude(Preprocessor &PP, FileID FID) {
   if (hasErrorOccurred())
     return;
@@ -330,7 +487,7 @@ void IncludeTreeBuilder::enteredInclude(Preprocessor &PP, FileID FID) {
     return;
   const SrcMgr::FileInfo &FI =
       PP.getSourceManager().getSLocEntry(FID).getFile();
-  IncludeStack.push_back({FI.getFileCharacteristic(), *FileRef, {}, {}});
+  IncludeStack.push_back({FI.getFileCharacteristic(), *FileRef, {}, {}, {}});
 }
 
 void IncludeTreeBuilder::exitedInclude(Preprocessor &PP, FileID IncludedBy,
@@ -347,6 +504,33 @@ void IncludeTreeBuilder::exitedInclude(Preprocessor &PP, FileID IncludedBy,
   SourceManager &SM = PP.getSourceManager();
   std::pair<FileID, unsigned> LocInfo = SM.getDecomposedExpansionLoc(ExitLoc);
 
+  // If the exited header belongs to a sub-module that's marked as missing from
+  // the umbrella, we must've first loaded its PCM file to find that out.
+  // We need to match this behavior with include-tree. Let's mark this as
+  // spurious import. For this node, Clang will load the top-level module, emit
+  // the appropriate diagnostics and then fall back to textual inclusion of the
+  // header itself.
+  if (auto FE = PP.getSourceManager().getFileEntryRefForID(Include)) {
+    ModuleMap &ModMap = PP.getHeaderSearchInfo().getModuleMap();
+    Module *M = ModMap.findModuleForHeader(*FE).getModule();
+    if (M && M->IsInferredMissingFromUmbrellaHeader) {
+      assert(!IncludeTree->isSubmodule() &&
+             "Include of header missing from umbrella header is modular");
+
+      moduleImport(PP, M, ExitLoc);
+      auto Import = IncludeStack.back().Includes.pop_back_val();
+
+      auto SpuriousImport = check(cas::IncludeTree::SpuriousImport::create(
+          DB, Import.Ref, IncludeTree->getRef()));
+      if (!SpuriousImport)
+        return;
+      IncludeStack.back().Includes.push_back(
+          {SpuriousImport->getRef(), LocInfo.second,
+           cas::IncludeTree::NodeKind::SpuriousImport});
+      return;
+    }
+  }
+
   IncludeStack.back().Includes.push_back({IncludeTree->getRef(), LocInfo.second,
                                           cas::IncludeTree::NodeKind::Tree});
 }
@@ -356,6 +540,109 @@ void IncludeTreeBuilder::handleHasIncludeCheck(Preprocessor &PP, bool Result) {
     return;
 
   IncludeStack.back().HasIncludeChecks.push_back(Result);
+}
+
+void IncludeTreeBuilder::moduleImport(Preprocessor &PP, const Module *M,
+                                      SourceLocation EndLoc) {
+  bool VisibilityOnly = M->isForBuilding(PP.getLangOpts());
+  auto Import = check(cas::IncludeTree::ModuleImport::create(
+      DB, M->getFullModuleName(), VisibilityOnly));
+  if (!Import)
+    return;
+
+  std::pair<FileID, unsigned> EndLocInfo =
+      PP.getSourceManager().getDecomposedExpansionLoc(EndLoc);
+  IncludeStack.back().Includes.push_back(
+      {Import->getRef(), EndLocInfo.second,
+       cas::IncludeTree::NodeKind::ModuleImport});
+}
+
+void IncludeTreeBuilder::enteredSubmodule(Preprocessor &PP, Module *M,
+                                          SourceLocation ImportLoc,
+                                          bool ForPragma) {
+  if (ForPragma)
+    return; // Will be parsed as normal.
+  if (hasErrorOccurred())
+    return;
+  assert(!IncludeStack.back().SubmoduleName && "repeated enteredSubmodule");
+  auto Ref = check(DB.storeFromString({}, M->getFullModuleName()));
+  IncludeStack.back().SubmoduleName = Ref;
+  EnteredModules.insert(M->getTopLevelModule());
+}
+void IncludeTreeBuilder::exitedSubmodule(Preprocessor &PP, Module *M,
+                                         SourceLocation ImportLoc,
+                                         bool ForPragma) {
+  // Submodule exit is handled automatically when leaving a modular file.
+}
+
+static Expected<cas::IncludeTree::Module>
+getIncludeTreeModule(cas::ObjectStore &DB, Module *M) {
+  using ITModule = cas::IncludeTree::Module;
+  SmallVector<cas::ObjectRef> Submodules;
+  for (Module *Sub : M->submodules()) {
+    Expected<ITModule> SubTree = getIncludeTreeModule(DB, Sub);
+    if (!SubTree)
+      return SubTree.takeError();
+    Submodules.push_back(SubTree->getRef());
+  }
+
+  ITModule::ModuleFlags Flags;
+  Flags.IsFramework = M->IsFramework;
+  Flags.IsExplicit = M->IsExplicit;
+  Flags.IsExternC = M->IsExternC;
+  Flags.IsSystem = M->IsSystem;
+  Flags.InferSubmodules = M->InferSubmodules;
+  Flags.InferExplicitSubmodules = M->InferExplicitSubmodules;
+  Flags.InferExportWildcard = M->InferExportWildcard;
+  Flags.UseExportAsModuleLinkName = M->UseExportAsModuleLinkName;
+  Flags.ModuleMapIsPrivate = M->ModuleMapIsPrivate;
+
+  bool GlobalWildcardExport = false;
+  SmallVector<ITModule::ExportList::Export> Exports;
+  llvm::BumpPtrAllocator Alloc;
+  llvm::StringSaver Saver(Alloc);
+  for (Module::ExportDecl &Export : M->Exports) {
+    if (Export.first == nullptr && Export.second) {
+      GlobalWildcardExport = true;
+    } else if (Export.first) {
+      StringRef Name = Saver.save(Export.first->getFullModuleName());
+      Exports.push_back({Name, Export.second});
+    }
+  }
+  std::optional<cas::ObjectRef> ExportList;
+  if (GlobalWildcardExport || !Exports.empty()) {
+    auto EL = ITModule::ExportList::create(DB, Exports, GlobalWildcardExport);
+    if (!EL)
+      return EL.takeError();
+    ExportList = EL->getRef();
+  }
+
+  SmallVector<ITModule::LinkLibraryList::LinkLibrary> Libraries;
+  for (Module::LinkLibrary &LL : M->LinkLibraries) {
+    Libraries.push_back({LL.Library, LL.IsFramework});
+  }
+  std::optional<cas::ObjectRef> LinkLibraries;
+  if (!Libraries.empty()) {
+    auto LL = ITModule::LinkLibraryList::create(DB, Libraries);
+    if (!LL)
+      return LL.takeError();
+    LinkLibraries = LL->getRef();
+  }
+
+  SmallVector<ITModule::RequirementList::Requirement> Requirements;
+  for (const auto &R : M->Requirements) {
+    Requirements.push_back({R.FeatureName, R.RequiredState});
+  }
+  std::optional<cas::ObjectRef> RequirementsList;
+  if (!Requirements.empty()) {
+    auto RL = ITModule::RequirementList::create(DB, Requirements);
+    if (!RL)
+      return RL.takeError();
+    RequirementsList = RL->getRef();
+  }
+
+  return ITModule::create(DB, M->Name, M->ExportAsModule, Flags, Submodules,
+                          ExportList, LinkLibraries, RequirementsList);
 }
 
 Expected<cas::IncludeTreeRoot> IncludeTreeBuilder::finishIncludeTree(
@@ -459,15 +746,87 @@ Expected<cas::IncludeTreeRoot> IncludeTreeBuilder::finishIncludeTree(
   if (!MainIncludeTree)
     return MainIncludeTree.takeError();
 
+  SmallVector<cas::ObjectRef> Modules;
+  SmallVector<cas::ObjectRef> APINotes;
+  llvm::SmallPtrSet<Module *, 4> AddedModules;
+  auto AddModule = [&](Module *M) -> llvm::Error {
+    if (!AddedModules.insert(M).second)
+      return Error::success();
+    Expected<cas::IncludeTree::Module> Mod = getIncludeTreeModule(DB, M);
+    if (!Mod)
+      return Mod.takeError();
+    Modules.push_back(Mod->getRef());
+    return Error::success();
+  };
+
+  if (!ScanInstance.getLangOpts().CurrentModule.empty()) {
+    if (Module *M = ScanInstance.getPreprocessor().getCurrentModule()) {
+      if (Error E = AddModule(M))
+        return std::move(E);
+
+      // If it is currently module, load its APINotes.
+      api_notes::APINotesManager ANM(ScanInstance.getSourceManager(),
+                                     ScanInstance.getLangOpts());
+      auto Notes = ANM.getCurrentModuleAPINotes(
+          M, ScanInstance.getLangOpts().APINotesModules,
+          ScanInstance.getAPINotesOpts().ModuleSearchPaths);
+      for (auto File : Notes) {
+        if (auto FileRef = addToFileList(ScanInstance.getFileManager(), File);
+            !FileRef)
+          return FileRef.takeError();
+        if (auto Buf =
+                ScanInstance.getSourceManager().getMemoryBufferForFileOrNone(
+                    File)) {
+          auto Note = DB.storeFromString({}, Buf->getBuffer());
+          if (!Note)
+            return Note.takeError();
+          APINotes.push_back(*Note);
+        }
+      }
+    } else {
+      // When building a TU or PCH, we can have headers files that are part of
+      // both the public and private modules that are included textually. In
+      // that case we need both of those modules.
+      ModuleMap &MMap =
+          ScanInstance.getPreprocessor().getHeaderSearchInfo().getModuleMap();
+      if (Module *M = MMap.findModule(ScanInstance.getLangOpts().CurrentModule))
+        if (Error E = AddModule(M))
+          return std::move(E);
+      if (Module *PM = MMap.findModule(ScanInstance.getLangOpts().ModuleName +
+                                       "_Private"))
+        if (Error E = AddModule(PM))
+          return std::move(E);
+    }
+  }
+
+  // Modules referenced by a recorded submodule name must be resolvable when
+  // replaying the include-tree.
+  for (Module *M : EnteredModules)
+    if (Error E = AddModule(M))
+      return std::move(E);
+
+  if (!Modules.empty()) {
+    auto ModMap = cas::IncludeTree::ModuleMap::create(DB, Modules);
+    if (!ModMap)
+      return ModMap.takeError();
+    ModuleMapRef = ModMap->getRef();
+  }
+
+  if (!APINotes.empty()) {
+    auto ModAPINotes = cas::IncludeTree::APINotes::create(DB, APINotes);
+    if (!ModAPINotes)
+      return ModAPINotes.takeError();
+    APINotesRef = ModAPINotes->getRef();
+  }
+
   auto FileList =
       cas::IncludeTree::FileList::create(DB, IncludedFiles, IncludedFileLists);
   if (!FileList)
     return FileList.takeError();
 
   return cas::IncludeTreeRoot::create(DB, MainIncludeTree->getRef(),
-                                      FileList->getRef(), PCHRef,
-                                      /*ModuleMapRef=*/std::nullopt,
-                                      /*APINotesRef=*/std::nullopt);
+                                      FileList->getRef(), PCHRef, ModuleMapRef,
+                                      APINotesRef);
 }
 
 Error IncludeTreeBuilder::addModuleInputs(ASTReader &Reader) {
@@ -507,6 +866,15 @@ Expected<cas::ObjectRef> IncludeTreeBuilder::getObjectForFile(Preprocessor &PP,
       PredefinesBufferRef = *Ref;
     }
     return *PredefinesBufferRef;
+  }
+  if (!FI.getContentCache().OrigEntry &&
+      FI.getName() == Module::getModuleInputBufferName()) {
+    // Virtual <module-includes> buffer
+    if (!ModuleIncludesBufferRef) {
+      if (Error E = getObjectForBuffer(FI).moveInto(ModuleIncludesBufferRef))
+        return std::move(E);
+    }
+    return *ModuleIncludesBufferRef;
   }
   assert(FI.getContentCache().OrigEntry);
   auto &FileRef = ObjectForFile[*FI.getContentCache().OrigEntry];
@@ -576,9 +944,9 @@ Expected<cas::ObjectRef> IncludeTreeBuilder::addToFileList(FileManager &FM,
 
 Expected<cas::IncludeTree>
 IncludeTreeBuilder::getCASTreeForFileIncludes(FilePPState &&PPState) {
-  return cas::IncludeTree::create(
-      DB, PPState.FileCharacteristic, PPState.File, PPState.Includes,
-      /*SubmoduleName=*/std::nullopt, PPState.HasIncludeChecks);
+  return cas::IncludeTree::create(DB, PPState.FileCharacteristic, PPState.File,
+                                  PPState.Includes, PPState.SubmoduleName,
+                                  PPState.HasIncludeChecks);
 }
 
 Expected<cas::IncludeTree::File>

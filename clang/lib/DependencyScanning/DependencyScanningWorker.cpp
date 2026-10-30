@@ -15,6 +15,7 @@
 #include "clang/DependencyScanning/DependencyScanningFilesystem.h"
 #include "clang/DependencyScanning/ScanAndUpdateArgs.h"
 #include "clang/Frontend/FrontendActions.h"
+#include "clang/Frontend/MultiplexConsumer.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/SemaOpenACC.h"
 #include "clang/Serialization/ObjectFilePCHContainerReader.h"
@@ -31,6 +32,60 @@
 
 using namespace clang;
 using namespace dependencies;
+
+namespace {
+/// See \c WrapScanModuleBuildAction.
+class WrapScanModuleBuildConsumer : public ASTConsumer {
+public:
+  WrapScanModuleBuildConsumer(CompilerInstance &CI,
+                              DependencyActionController &Controller)
+      : CI(CI), Controller(Controller) {}
+
+  void HandleTranslationUnit(ASTContext &Ctx) override {
+    Controller.finalizeModuleBuild(CI);
+  }
+
+private:
+  CompilerInstance &CI;
+  DependencyActionController &Controller;
+};
+
+/// A wrapper for implicit module build actions in the scanner.
+class WrapScanModuleBuildAction : public WrapperFrontendAction {
+public:
+  WrapScanModuleBuildAction(std::unique_ptr<FrontendAction> WrappedAction,
+                            DependencyActionController &Controller)
+      : WrapperFrontendAction(std::move(WrappedAction)),
+        Controller(Controller) {}
+
+private:
+  bool BeginInvocation(CompilerInstance &CI) override {
+    if (!Controller.initializeModuleBuild(CI))
+      return false;
+    return WrapperFrontendAction::BeginInvocation(CI);
+  }
+
+  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
+                                                 StringRef InFile) override {
+    auto OtherConsumer = WrapperFrontendAction::CreateASTConsumer(CI, InFile);
+    if (!OtherConsumer)
+      return nullptr;
+    Module *M = CI.getPreprocessor().getCurrentModule();
+    assert(M && "WrapScanModuleBuildAction should only be used with module");
+    if (!M)
+      return OtherConsumer;
+    auto Consumer =
+        std::make_unique<WrapScanModuleBuildConsumer>(CI, Controller);
+    std::vector<std::unique_ptr<ASTConsumer>> Consumers;
+    Consumers.push_back(std::move(Consumer));
+    Consumers.push_back(std::move(OtherConsumer));
+    return std::make_unique<MultiplexConsumer>(std::move(Consumers));
+  }
+
+private:
+  DependencyActionController &Controller;
+};
+} // namespace
 
 static bool checkHeaderSearchPaths(const HeaderSearchOptions &HSOpts,
                                    const HeaderSearchOptions &ExistingHSOpts,
@@ -596,6 +651,12 @@ initializeScanInstanceDependencyCollector(
       Service, std::move(DepOutputOpts), ScanInstance, Controller, Inv,
       std::move(PrebuiltModulesASTMap), StableDirs);
   ScanInstance.addDependencyCollector(MDC);
+  ScanInstance.setGenModuleActionWrapper(
+      [&Controller = Controller](const FrontendOptions &Opts,
+                                 std::unique_ptr<FrontendAction> Wrapped) {
+        return std::make_unique<WrapScanModuleBuildAction>(std::move(Wrapped),
+                                                           Controller);
+      });
   return MDC;
 }
 

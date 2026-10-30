@@ -124,6 +124,9 @@ struct ModuleDeps {
   /// determined that the differences are benign for this compilation.
   std::vector<ModuleID> ClangModuleDeps;
 
+  /// The CASID for the module include-tree, if any.
+  std::optional<std::string> IncludeTreeID;
+
   /// The set of libraries or frameworks to link against when
   /// an entity from this module is used.
   llvm::SmallVector<Module::LinkLibrary, 2> LinkLibraries;

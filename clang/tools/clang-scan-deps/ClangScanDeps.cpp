@@ -595,6 +595,10 @@ public:
         for (auto &&ModID : ModuleIDs) {
           auto &MD = Modules[ModID];
           JOS.object([&] {
+            if (MD.IncludeTreeID)
+              JOS.attribute("cas-include-tree-id",
+                            StringRef(*MD.IncludeTreeID));
+
             if (MD.IsInStableDirectories)
               JOS.attribute("is-in-stable-directories",
                             MD.IsInStableDirectories);
