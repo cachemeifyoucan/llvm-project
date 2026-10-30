@@ -414,11 +414,6 @@ public:
   /// caching of compilation outputs. This is used for testing purposes.
   unsigned DisableCachedCompileJobReplay : 1;
 
-  /// Whether to preserve the original PCH path in the include-tree, or to
-  /// canonicalize it to a fixed value. Setting this to \c true allows the use
-  /// of gmodules with PCH and include tree.
-  unsigned IncludeTreePreservePCHPath : 1;
-
   /// Output (and read) PCM files regardless of compiler errors.
   LLVM_PREFERRED_TYPE(bool)
   unsigned AllowPCMWithCompilerErrors : 1;
@@ -637,7 +632,7 @@ public:
         BuildingImplicitModule(false), BuildingImplicitModuleUsesLock(true),
         ModulesEmbedAllFiles(false), IncludeTimestamps(true),
         UseTemporary(true), CacheCompileJob(false), ForIncludeTreeScan(false),
-        DisableCachedCompileJobReplay(false), IncludeTreePreservePCHPath(false),
+        DisableCachedCompileJobReplay(false),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
         EmitSymbolGraph(false), EmitExtensionSymbolGraphs(false),
         EmitSymbolGraphSymbolLabelsForTesting(false),
