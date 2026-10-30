@@ -2299,8 +2299,13 @@ void Preprocessor::HandleIncludeDirective(SourceLocation HashLoc,
             break;
         }
         if (!M) {
-          Diags->Report(diag::err_pp_missing_module_include_tree)
-              << getLangOpts().CurrentModule;
+          std::string PathStr;
+          for (const IdentifierLoc &NameLoc : Import->ImportPath) {
+            if (!PathStr.empty())
+              PathStr += '.';
+            PathStr += NameLoc.getIdentifierInfo()->getName();
+          }
+          Diags->Report(diag::err_pp_missing_module_include_tree) << PathStr;
 
           return;
         }

@@ -340,10 +340,9 @@ TEST_F(PPCachedActionsTest, ImportMissingModuleVisibilityOnly) {
              Actions);
   EXPECT_TRUE(Diags.hasErrorOccurred());
   ASSERT_EQ(DiagConsumer.Messages.size(), 1u);
-  EXPECT_NE(
-      DiagConsumer.Messages[0].find("declared in include-tree module map"),
-      std::string::npos)
-      << DiagConsumer.Messages[0];
+  EXPECT_EQ(
+      DiagConsumer.Messages[0],
+      "no module named 'Top.Missing' declared in include-tree module map");
 }
 
 TEST_F(PPCachedActionsTest, SpuriousImport) {
