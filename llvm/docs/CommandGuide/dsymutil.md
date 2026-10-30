@@ -51,6 +51,19 @@ Code sign the dSYM bundle with the given signing identity after linking.
 Cannot be used with {option}`--flat` or {option}`--no-output`.
 :::
 
+:::{option} --cas <path to CAS>
+Specify the path to a content addressable storage that dsymutil may used to
+resolve CASID file paths in the debug info.
+:::
+
+:::{option} --cas-plugin-path <path to dylib>
+Specify the path to CAS plugin dylib if used.
+:::
+
+:::{option} --cas-plugin-option <cas option>
+Specify the options to pass to CAS plugin dylib if needed.
+:::
+
 :::{option} --disallow <path>
 Exclude debug map objects listed in the YAML file at \<path>. Only filters
 N_OSO entries. If `--oso-prepend-path` is specified, the path prefix applies,

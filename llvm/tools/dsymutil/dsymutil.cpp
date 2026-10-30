@@ -24,6 +24,9 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/CAS/ActionCache.h"
+#include "llvm/CAS/CASConfiguration.h"
+#include "llvm/CAS/ObjectStore.h"
 #include "llvm/DebugInfo/DIContext.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/DebugInfo/DWARF/DWARFVerifier.h"
@@ -115,6 +118,7 @@ struct DsymutilOptions {
   DWARFVerify Verify = DWARFVerify::Default;
   ReproducerMode ReproMode = ReproducerMode::GenerateOnCrash;
   dsymutil::LinkOptions LinkOpts;
+  cas::CASConfiguration CASOptions;
 };
 
 /// Return a list of input files. This function has logic for dealing with the
@@ -452,6 +456,17 @@ static Expected<DsymutilOptions> getOptions(opt::InputArgList &Args) {
 
   if (opt::Arg *DisallowArg = Args.getLastArg(OPT_disallow))
     Options.DisallowFile = DisallowArg->getValue();
+
+  if (opt::Arg *CASPath = Args.getLastArg(OPT_cas))
+    Options.CASOptions.CASPath = CASPath->getValue();
+
+  if (opt::Arg *CASPluginPath = Args.getLastArg(OPT_cas_plugin_path))
+    Options.CASOptions.PluginPath = CASPluginPath->getValue();
+
+  for (auto CASPluginOpt : Args.getAllArgValues(OPT_cas_plugin_option)) {
+    auto [Name, Val] = StringRef(CASPluginOpt).split('=');
+    Options.CASOptions.PluginOptions.emplace_back(Name, Val);
+  }
 
   if (Error E = verifyOptions(Options))
     return std::move(E);
@@ -857,6 +872,13 @@ int dsymutil_main(int argc, char **argv, const llvm::ToolContext &) {
     }
     Options.LinkOpts.ResourceDir = OutputLocationOrErr->getResourceDir();
 
+    // Compute a global CAS.
+    if (auto E = BinHolder.setGlobalCASConfiguration(Options.CASOptions)) {
+      WithColor::error() << "failed to open CAS: " << toString(std::move(E))
+                         << "\n";
+      return EXIT_FAILURE;
+    }
+
     // Use a single thread for --statistics and --verbose (which forces one
     // thread) so the per-architecture link output is emitted in order.
     DefaultThreadPool ThreadPool(hardware_concurrency(
@@ -883,6 +905,15 @@ int dsymutil_main(int argc, char **argv, const llvm::ToolContext &) {
         if (Options.DumpDebugMap) {
           Map->print(outs());
           continue;
+        }
+
+        // Update the global CAS if it is not available on the command-line.
+        if (Options.CASOptions.CASPath.empty()) {
+          for (auto &F : *Map) {
+            if (BinHolder.updateGlobalCASFromPath(
+                    sys::path::parent_path(F->getObjectFilename())))
+              break;
+          }
         }
 
         if (Map->begin() == Map->end()) {
