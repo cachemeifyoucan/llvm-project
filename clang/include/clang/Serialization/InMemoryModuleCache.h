@@ -39,14 +39,21 @@ class InMemoryModuleCache : public llvm::RefCountedBase<InMemoryModuleCache> {
     /// The modification time of this PCM.
     time_t ModTime = 0;
 
+    std::string CASID;
+
     /// Track whether this PCM is known to be good (either built or
     /// successfully imported by a CompilerInstance/ASTReader using this
     /// cache).
     bool IsFinal = false;
 
     PCM() = default;
-    PCM(std::unique_ptr<llvm::MemoryBuffer> Buffer, off_t Size, time_t ModTime)
-        : Buffer(std::move(Buffer)), Size(Size), ModTime(ModTime) {}
+    PCM(std::unique_ptr<llvm::MemoryBuffer> Buffer)
+        : Buffer(std::move(Buffer)) {}
+
+    PCM(std::unique_ptr<llvm::MemoryBuffer> Buffer, off_t Size, time_t ModTime,
+        llvm::StringRef CASID)
+        : Buffer(std::move(Buffer)), Size(Size), ModTime(ModTime),
+          CASID(CASID.str()) {}
   };
 
   /// Cache of buffers.
@@ -78,7 +85,8 @@ public:
   /// \return a reference to the buffer as a convenience.
   llvm::MemoryBuffer &addPCM(llvm::StringRef Filename,
                              std::unique_ptr<llvm::MemoryBuffer> Buffer,
-                             off_t Size, time_t ModTime);
+                             off_t Size, time_t ModTime,
+                             llvm::StringRef CASID = "");
 
   /// Store a just-built PCM under the Filename.
   ///
@@ -107,6 +115,9 @@ public:
   /// don't change \c Size and \c ModTime.
   llvm::MemoryBuffer *lookupPCM(llvm::StringRef Filename, off_t &Size,
                                 time_t &ModTime) const;
+
+  /// Get the PCM if it exits; else nullptr.
+  const PCM *lookup(llvm::StringRef Filename) const;
 
   /// Check whether the PCM is final and has been shown to work.
   ///

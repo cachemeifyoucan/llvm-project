@@ -6627,6 +6627,14 @@ Module *ASTReader::getSubmodule(uint32_t GlobalID) {
         CurrentModule->PresumedModuleMapFile = F.ModuleMapPath;
         if (!F.ModuleCacheKey.empty())
           CurrentModule->setModuleCacheKey(F.ModuleCacheKey);
+
+        // Set CASID for current module.
+        if (const auto *PCM =
+                ModuleMgr.getModuleCache().getInMemoryModuleCache().lookup(
+                    F.FileName)) {
+          CurrentModule->setCASID(PCM->CASID);
+          F.CASID = PCM->CASID;
+        }
       }
 
       CurrentModule->Kind = Kind;

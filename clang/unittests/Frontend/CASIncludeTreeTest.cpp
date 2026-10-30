@@ -20,6 +20,10 @@
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/FrontendActions.h"
 #include "clang/Frontend/TextDiagnosticBuffer.h"
+#include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/Preprocessor.h"
+#include "clang/Serialization/ASTReader.h"
+#include "clang/Serialization/ModuleManager.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/CAS/ActionCache.h"
 #include "llvm/CAS/ObjectStore.h"
@@ -35,14 +39,33 @@ using llvm::Succeeded;
 
 namespace {
 
-/// Collects the names of the declarations in the main translation unit.
+/// Collects the names of the declarations in the main translation unit, and
+/// the CAS IDs recorded for the loaded AST files and modules.
 class CollectDeclsAction : public ASTFrontendAction {
 public:
   std::vector<std::string> DeclNames;
+  /// The CAS IDs of the loaded AST files, by module name (empty for a PCH).
+  llvm::StringMap<std::string> ASTFileCASIDs;
+  /// The CAS IDs of the loaded modules, by module name.
+  llvm::StringMap<std::string> ModuleCASIDs;
 
   std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
                                                  StringRef InFile) override {
     return std::make_unique<Visitor>(DeclNames);
+  }
+
+  void EndSourceFileAction() override {
+    CompilerInstance &CI = getCompilerInstance();
+    IntrusiveRefCntPtr<ASTReader> Reader = CI.getASTReader();
+    if (!Reader)
+      return;
+    ModuleMap &MMap = CI.getPreprocessor().getHeaderSearchInfo().getModuleMap();
+    for (serialization::ModuleFile &MF : Reader->getModuleManager()) {
+      ASTFileCASIDs[MF.ModuleName] = MF.CASID;
+      if (Module *M = MMap.findModule(MF.ModuleName))
+        if (std::optional<StringRef> ID = M->getCASID())
+          ModuleCASIDs[MF.ModuleName] = ID->str();
+    }
   }
 
 private:
@@ -252,6 +275,9 @@ TEST_F(CASIncludeTreeTest, PCH) {
   ASSERT_TRUE(run(Args, Action, Diags));
   EXPECT_EQ(Diags->getNumErrors(), 0u);
   EXPECT_TRUE(llvm::is_contained(Action.DeclNames, "use_pch"));
+  // The PCH loaded from the include-tree records its CAS ID.
+  EXPECT_EQ(Action.ASTFileCASIDs.lookup(""),
+            DB->getID(*PCHContents).toString());
 }
 
 TEST_F(CASIncludeTreeTest, Module) {
@@ -354,14 +380,17 @@ TEST_F(CASIncludeTreeTest, ModuleFileCacheKey) {
   };
 
   // Store the module file at \p PCMPath as the main output of a compile job
-  // with cache key \p Key, as -fcache-compile-job would have done.
-  auto cacheModule = [&](StringRef PCMPath, const CASID &Key) {
+  // with cache key \p Key, as -fcache-compile-job would have done. \p PCMID
+  // is set to the CAS ID of the module file.
+  auto cacheModule = [&](StringRef PCMPath, const CASID &Key,
+                         std::string &PCMID) {
     auto Buffer = llvm::MemoryBuffer::getFile(PCMPath);
     ASSERT_TRUE(Buffer);
     std::optional<ObjectRef> PCM;
     ASSERT_THAT_ERROR(
         DB->storeFromString({}, (*Buffer)->getBuffer()).moveInto(PCM),
         Succeeded());
+    PCMID = DB->getID(*PCM).toString();
     CompileJobCacheResult::Builder Builder;
     Builder.addOutput(CompileJobCacheResult::OutputKind::MainOutput, *PCM);
     std::optional<ObjectRef> Result;
@@ -428,7 +457,8 @@ TEST_F(CASIncludeTreeTest, ModuleFileCacheKey) {
         run(Args, Action, Diags, /*ExpectErrors=*/false, nullptr,
             [&](CompilerInstance &CI) { CI.setCompileJobCacheKey(KeyA); }));
   }
-  cacheModule(PCMPathA, KeyA);
+  std::string PCMIDA;
+  cacheModule(PCMPathA, KeyA, PCMIDA);
 
   // Build module 'B', which imports 'A' through its cache key. The include-tree
   // file system cannot see the module file on disk.
@@ -468,7 +498,8 @@ TEST_F(CASIncludeTreeTest, ModuleFileCacheKey) {
         run(Args, Action, Diags, /*ExpectErrors=*/false, nullptr,
             [&](CompilerInstance &CI) { CI.setCompileJobCacheKey(KeyB); }));
   }
-  cacheModule(PCMPathB, KeyB);
+  std::string PCMIDB;
+  cacheModule(PCMPathB, KeyB, PCMIDB);
 
   // Import 'B' through its cache key. 'A' is found through the cache key that
   // 'B' recorded for its import.
@@ -494,6 +525,11 @@ TEST_F(CASIncludeTreeTest, ModuleFileCacheKey) {
   TextDiagnosticBuffer *Diags;
   ASSERT_TRUE(run(Args, Action, Diags));
   EXPECT_TRUE(llvm::is_contained(Action.DeclNames, "use"));
+  // The modules loaded from the CAS record the CAS IDs of their module files.
+  EXPECT_EQ(Action.ASTFileCASIDs.lookup("A"), PCMIDA);
+  EXPECT_EQ(Action.ASTFileCASIDs.lookup("B"), PCMIDB);
+  EXPECT_EQ(Action.ModuleCASIDs.lookup("A"), PCMIDA);
+  EXPECT_EQ(Action.ModuleCASIDs.lookup("B"), PCMIDB);
 }
 
 TEST_F(CASIncludeTreeTest, InvalidRootID) {

@@ -2817,7 +2817,8 @@ static bool addCachedModuleFileToInMemoryCache(
   auto Buf = OutputProxy->getMemoryBuffer();
   size_t BufSize = Buf->getBufferSize();
   ModCache.getInMemoryModuleCache().addPCM(Path, std::move(Buf), BufSize,
-                                           /*ModTime=*/0);
+                                           /*ModTime=*/0,
+                                           OutputProxy->getID().toString());
   return false;
 }
 

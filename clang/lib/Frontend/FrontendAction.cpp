@@ -1477,6 +1477,7 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
             DeserialListener, DeleteDeserialListener);
         DeleteDeserialListener = true;
       }
+      std::string PCHCASID;
       if (!CI.getPreprocessorOpts().ImplicitPCHInclude.empty() ||
           IncludeTreePCH) {
         std::string PCHPath;
@@ -1488,6 +1489,10 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
           if (llvm::Error E =
                   IncludeTreePCH->getMemoryBuffer().moveInto(PCHBuffer))
             return reportError(std::move(E));
+          auto PCHFile = IncludeTreePCH->getContents();
+          if (!PCHFile)
+            return reportError(PCHFile.takeError());
+          PCHCASID = PCHFile->getID().toString();
           PCHPath = PCHBuffer->getBufferIdentifier();
         } else {
           PCHPath = CI.getPreprocessorOpts().ImplicitPCHInclude;
@@ -1500,6 +1505,12 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
             DeserialListener, DeleteDeserialListener, std::move(PCHBuffer));
         if (!CI.getASTContext().getExternalSource())
           return false;
+
+        // After loading PCH, set its CASID for content.
+        if (!PCHCASID.empty()) {
+          auto &MF = CI.getASTReader()->getModuleManager().getPrimaryModule();
+          MF.CASID = PCHCASID;
+        }
       }
       // If modules are enabled, create the AST reader before creating
       // any builtins, so that all declarations know that they might be
