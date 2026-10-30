@@ -5638,6 +5638,11 @@ std::string CompilerInvocation::computeContextHash() const {
   if (!SanHash.empty())
     HBuilder.add(SanHash.Mask);
 
+  // Caching + implicit modules, which is only set in clang-scan-deps, puts
+  // additional CASIDs in the pcm for either cas-fs or include-tree.
+  HBuilder.add(getFrontendOpts().CacheCompileJob,
+               getFrontendOpts().ForIncludeTreeScan);
+
   // Scanning PCMs store include trees with prefix mappings already applied.
   // Include the mappings in the hash to avoid reusing stale mapped paths.
   HBuilder.addRange(getFrontendOpts().PathPrefixMappings);

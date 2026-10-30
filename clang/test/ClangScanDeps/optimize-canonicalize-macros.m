@@ -11,6 +11,11 @@
 // This tests that we have two scanning module variants.
 // RUN: find %t/module-cache -name "*.pcm" | wc -l | grep 2
 
+// RUN: clang-scan-deps -compilation-database %t/build/compile-commands.json \
+// RUN:   -j 1 -format experimental-include-tree-full -cas-path %t/cas \
+// RUN:   -optimize-args=canonicalize-macros > %t/deps_cas.db
+// RUN: cat %t/deps_cas.db | FileCheck %s --check-prefixes=CAS
+
 // Verify that there are only two variants and that the expected merges have
 // happened.
 
@@ -53,6 +58,41 @@
 // CHECK-NEXT:   "translation-units": [
 // CHECK:        ]
 // CHECK:      }
+
+
+// Check that when CAS is on, we still only have two variants of A.
+// CAS:      {
+// CAS-NEXT:   "modules": [
+// CAS-NEXT:     {
+// CAS-NEXT:       "cache-key": "{{.*}}",
+// CAS-NEXT:       "cas-include-tree-id": "{{.*}}",
+// CAS-NEXT:       "clang-module-deps": [],
+// CAS-NEXT:       "clang-modulemap-file":
+// CAS-NEXT:       "command-line": [
+// CAS:            ],
+// CAS-NEXT:       "context-hash": "{{.*}}",
+// CAS-NEXT:       "file-deps": [
+// CAS:            ],
+// CAS-NEXT:       "link-libraries": [],
+// CAS-NEXT:       "name": "A"
+// CAS-NEXT:     },
+// CAS-NEXT:     {
+// CAS-NEXT:       "cache-key": "{{.*}}",
+// CAS-NEXT:       "cas-include-tree-id": "{{.*}}",
+// CAS-NEXT:       "clang-module-deps": [],
+// CAS-NEXT:       "clang-modulemap-file":
+// CAS-NEXT:       "command-line": [
+// CAS:            ],
+// CAS-NEXT:       "context-hash": "{{.*}}",
+// CAS-NEXT:       "file-deps": [
+// CAS:            ],
+// CAS-NEXT:       "link-libraries": [],
+// CAS-NEXT:       "name": "A"
+// CAS-NEXT:     }
+// CAS-NEXT:   ],
+// CAS-NEXT:   "translation-units": [
+// CAS:        ]
+// CAS:      }
 
 
 //--- build/compile-commands.json.in

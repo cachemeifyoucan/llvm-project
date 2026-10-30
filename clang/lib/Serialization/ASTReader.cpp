@@ -268,6 +268,10 @@ bool ChainedASTReaderListener::visitInputFile(StringRef Filename,
                                        isExplicitModule);
   return Continue;
 }
+bool ChainedASTReaderListener::readIncludeTreeID(StringRef ID, bool Complain) {
+  return First->readIncludeTreeID(ID, Complain) ||
+         Second->readIncludeTreeID(ID, Complain);
+}
 bool ChainedASTReaderListener::readModuleCacheKey(StringRef ModuleName,
                                                   StringRef Filename,
                                                   StringRef CacheKey) {
@@ -3755,6 +3759,12 @@ ASTReader::ReadControlBlock(ModuleFile &F,
 
     case CAS_INCLUDE_TREE_ID:
       F.IncludeTreeID = Blob.str();
+      if (Listener) {
+        bool Complain =
+            !canRecoverFromOutOfDate(F.FileName, ClientLoadCapabilities);
+        if (Listener->readIncludeTreeID(F.IncludeTreeID, Complain))
+          return OutOfDate;
+      }
       break;
     }
   }

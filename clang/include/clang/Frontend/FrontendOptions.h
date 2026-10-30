@@ -405,6 +405,10 @@ public:
   /// (\c CASIncludeTreeID).
   unsigned CacheCompileJob : 1;
 
+  /// Whether this invocation is dependency scanning for include-tree. Used to
+  /// separate module cache for include-tree from cas-fs.
+  unsigned ForIncludeTreeScan : 1;
+
   /// Avoid checking if the compile job is already cached, force compilation and
   /// caching of compilation outputs. This is used for testing purposes.
   unsigned DisableCachedCompileJobReplay : 1;
@@ -623,7 +627,7 @@ public:
         ASTDumpDecls(false), ASTDumpLookups(false),
         BuildingImplicitModule(false), BuildingImplicitModuleUsesLock(true),
         ModulesEmbedAllFiles(false), IncludeTimestamps(true),
-        UseTemporary(true), CacheCompileJob(false),
+        UseTemporary(true), CacheCompileJob(false), ForIncludeTreeScan(false),
         DisableCachedCompileJobReplay(false),
         AllowPCMWithCompilerErrors(false), ModulesShareFileManager(true),
         EmitSymbolGraph(false), EmitExtensionSymbolGraphs(false),

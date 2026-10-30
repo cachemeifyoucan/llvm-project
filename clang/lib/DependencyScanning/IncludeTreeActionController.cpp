@@ -310,8 +310,9 @@ IncludeTreeActionController::clone() const {
 
 void IncludeTreeActionController::initializeScanInvocation(
     CompilerInvocation &ScanInvocation) {
-  // Enable caching in the resulting commands.
+  // Enable include-tree in scanning PCMs and caching in the resulting commands.
   ScanInvocation.getFrontendOpts().CacheCompileJob = true;
+  ScanInvocation.getFrontendOpts().ForIncludeTreeScan = true;
   ScanInvocation.getCASOpts() = CASOpts;
 }
 
