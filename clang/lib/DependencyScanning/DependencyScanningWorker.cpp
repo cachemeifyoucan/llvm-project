@@ -1042,10 +1042,12 @@ public:
     // early with errors.
     llvm::scope_exit CleanUp([&]() {
       CI.clearDependencyCollectors();
-      // The preprocessor may not be created at the entry of this method,
-      // but it must have been created when this method returns, whether
-      // there are errors during scanning or not.
-      CI.getPreprocessor().removePPCallbacks();
+
+      // Only remove the PPCallbacks if CI has its preprocessor setup.
+      // It could be the case where the CAS action controller initialization
+      // fails, and the PP may not be setup.
+      if (CI.hasPreprocessor())
+        CI.getPreprocessor().removePPCallbacks();
     });
 
     auto MDC = initializeScanInstanceDependencyCollector(
@@ -1083,13 +1085,15 @@ public:
       bool PPFailed = PP.EnterSourceFile(MainFileID, nullptr, SourceLocation());
       assert(!PPFailed && "Preprocess must be able to enter the main file.");
       (void)PPFailed;
-      CB = MDC->getPPCallbacks();
+      CB = PP.getPPCallbacks();
     } else {
       // When SrcLocOffset is non-zero, the preprocessor has already been
       // initialized through a previous call of computeDependencies. We want to
       // preserve the PP's state, hence we do not call EnterSourceFile again.
-      MDC->attachToPreprocessor(PP);
-      CB = MDC->getPPCallbacks();
+      auto DCs = CI.getDependencyCollectors();
+      for (auto &DC : DCs)
+        DC->attachToPreprocessor(PP);
+      CB = PP.getPPCallbacks();
 
       FileID PrevFID;
       SrcMgr::CharacteristicKind FileType =
@@ -1126,8 +1130,15 @@ public:
     if (!Success)
       return false;
 
-    Consumer.handleBuildCommand(
-        {CommandLine[0], ModuleInvocation.getCC1CommandLine(), std::nullopt});
+    std::string ID = ModuleInvocation.getFrontendOpts().CASIncludeTreeID;
+    if (!ID.empty())
+      Consumer.handleIncludeTreeID(std::move(ID));
+
+    auto LastCC1Arguments = ModuleInvocation.getCC1CommandLine();
+    auto LastCC1CacheKey = Controller.getCacheKey(ModuleInvocation);
+
+    Consumer.handleBuildCommand({CommandLine[0], std::move(LastCC1Arguments),
+                                 std::move(LastCC1CacheKey)});
 
     return true;
   }
@@ -1364,8 +1375,12 @@ bool DependencyScanningWorker::computeDependenciesByName(
 
   bool AllScansSucceeded = true;
   while (std::optional<std::string> NextName = getNextName()) {
+    // FIXME: Make IncludeTreeActionController re-entrant and avoid cloning
+    // here. The controller is not re-entrant across names, so each query gets
+    // its own clone.
+    auto ControllerClone = Controller.clone();
     bool Success =
-        CIWC->computeDependencies(*NextName, DepConsumer, Controller);
+        CIWC->computeDependencies(*NextName, DepConsumer, *ControllerClone);
     DepConsumer.finishQuery(*NextName, Success);
     AllScansSucceeded = AllScansSucceeded && Success;
   }

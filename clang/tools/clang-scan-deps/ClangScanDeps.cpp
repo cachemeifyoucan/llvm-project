@@ -1263,7 +1263,7 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
         SmallVector<StringRef> Names;
         ModuleNameRef.split(Names, ',');
 
-        CallbackActionController Controller(LookupOutput);
+        auto Controller = WorkerTool.createActionController(LookupOutput);
         ByNameConsumer DepConsumer(*FD, LocalIndex);
 
         unsigned NameIdx = 0;
@@ -1274,7 +1274,7 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
         };
 
         bool Success = WorkerTool.getByNameDependencies(
-            CWD, Input->CommandLine, DiagConsumer, Controller, GetNextName,
+            CWD, Input->CommandLine, DiagConsumer, *Controller, GetNextName,
             DepConsumer);
         handleDiagnostics(ModuleNameRef, S, Errs);
         if (!Success)
