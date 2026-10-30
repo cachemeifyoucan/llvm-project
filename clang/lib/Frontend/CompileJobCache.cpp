@@ -154,6 +154,8 @@ std::optional<int> CompileJobCache::initialize(CompilerInstance &Clang) {
   std::tie(ResultCacheKey, ResultCacheKeyWithInputCacheKeysResolved) = *Keys;
 
   switch (FrontendOpts.ProgramAction) {
+  case frontend::GenerateModule:
+  case frontend::GenerateModuleInterface:
   case frontend::GeneratePCH:
     Clang.getPreprocessorOpts().CachingDiagOption = CachingDiagKind::Error;
     break;

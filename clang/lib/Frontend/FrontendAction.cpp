@@ -788,6 +788,9 @@ static Module *prepareToBuildModule(CompilerInstance &CI,
   // be resolved relative to the build directory of the module map file.
   CI.getPreprocessor().setMainFileDir(*M->Directory);
 
+  if (auto CacheKey = CI.getCompileJobCacheKey())
+    M->setModuleCacheKey(CacheKey->toString());
+
   // If the module was inferred from a different module map (via an expanded
   // umbrella module definition), track that fact.
   // FIXME: It would be preferable to fill this in as part of processing
@@ -940,6 +943,9 @@ static Module *prepareToBuildModule(CompilerInstance &CI,
 
     return nullptr;
   }
+
+  if (auto CacheKey = CI.getCompileJobCacheKey())
+    M->setModuleCacheKey(CacheKey->toString());
 
   // If we're being run from the command-line, the module build stack will not
   // have been filled in yet, so complete it now in order to allow us to detect
@@ -1394,6 +1400,12 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
     else
       CI.getDiagnostics().Report(diag::err_module_map_not_found) << Filename;
   }
+
+  // Provide any modules from the action cache.
+  for (const auto &KeyPair : CI.getFrontendOpts().ModuleCacheKeys)
+    if (CI.addCachedModuleFile(KeyPair.first, KeyPair.second,
+                               "-fmodule-file-cache-key"))
+      return false;
 
   // If compiling implementation of a module, load its module map file now.
   (void)CI.getPreprocessor().getCurrentModuleImplementation();

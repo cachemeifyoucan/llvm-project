@@ -3119,6 +3119,9 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
   for (const auto &ModuleFile : Opts.ModuleFiles)
     GenerateArg(Consumer, OPT_fmodule_file, ModuleFile);
 
+  for (const auto &A : Opts.ModuleCacheKeys)
+    GenerateMultiArg(Consumer, OPT_fmodule_file_cache_key, {A.first, A.second});
+
   for (const auto &A : Opts.PathPrefixMappings)
     GenerateMultiArg(Consumer, OPT_fdepscan_prefix_map, {A.first, A.second});
 
@@ -3340,6 +3343,12 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
     StringRef Val = A->getValue();
     if (!Val.contains('='))
       Opts.ModuleFiles.push_back(std::string(Val));
+  }
+
+  for (const Arg *A : Args.filtered(OPT_fmodule_file_cache_key)) {
+    ArrayRef<const char *> Values = A->getValues();
+    assert(Values.size() == 2);
+    Opts.ModuleCacheKeys.emplace_back(Values[0], Values[1]);
   }
 
   // Handle path prefix mappings

@@ -179,6 +179,9 @@ public:
   /// The key ModuleManager used for the module file.
   ModuleFileKey FileKey;
 
+  /// The \c ActionCache key for this module, or empty.
+  std::string ModuleCacheKey;
+
   /// The include-tree root ID for implicit modules built with the dependency
   /// scanner, or empty.
   std::string IncludeTreeID;

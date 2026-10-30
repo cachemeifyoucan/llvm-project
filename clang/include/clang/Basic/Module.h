@@ -471,6 +471,9 @@ private:
   std::optional<ModuleFileName> ASTFileName;
   std::optional<ModuleFileKey> ASTFileKey;
 
+  /// The \c ActionCache key for this module, if any.
+  std::optional<std::string> ModuleCacheKey;
+
   /// The top-level headers associated with this module.
   llvm::SmallSetVector<FileEntryRef, 2> TopHeaders;
 
@@ -985,6 +988,15 @@ public:
     Module *TopLevel = getTopLevelModule();
     TopLevel->ASTFileName = NewName;
     TopLevel->ASTFileKey = NewKey;
+  }
+
+  std::optional<std::string> getModuleCacheKey() const {
+    return getTopLevelModule()->ModuleCacheKey;
+  }
+
+  void setModuleCacheKey(std::string Key) {
+    assert(!getModuleCacheKey() || *getModuleCacheKey() == Key);
+    getTopLevelModule()->ModuleCacheKey = std::move(Key);
   }
 
   /// Retrieve the umbrella directory as written.

@@ -906,6 +906,7 @@ void ASTWriter::WriteBlockInfoBlock() {
   RECORD(ORIGINAL_FILE);
   RECORD(ORIGINAL_FILE_ID);
   RECORD(INPUT_FILE_OFFSETS);
+  RECORD(MODULE_CACHE_KEY);
   RECORD(CAS_INCLUDE_TREE_ID);
 
   BLOCK(OPTIONS_BLOCK);
@@ -1577,6 +1578,18 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, StringRef isysroot) {
     Stream.EmitRecord(MODULE_DIRECTORY_DEPENDENCIES, Record);
   }
 
+  if (WritingModule) {
+    // Module Cache Key
+    if (auto Key = WritingModule->getModuleCacheKey()) {
+      auto Abbrev = std::make_shared<BitCodeAbbrev>();
+      Abbrev->Add(BitCodeAbbrevOp(MODULE_CACHE_KEY));
+      Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));
+      unsigned AbbrevCode = Stream.EmitAbbrev(std::move(Abbrev));
+      RecordData::value_type Record[] = {MODULE_CACHE_KEY};
+      Stream.EmitRecordWithBlob(AbbrevCode, Record, *Key);
+    }
+  }
+
   // CAS include-tree id, for the scanner.
   if (auto ID = PP.getCASIncludeTreeID()) {
     auto Abbrev = std::make_shared<BitCodeAbbrev>();
@@ -1602,6 +1615,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, StringRef isysroot) {
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File timestamp
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File name raw kind
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File name len
+    Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // Cache key len
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Strings
     unsigned AbbrevCode = Stream.EmitAbbrev(std::move(Abbrev));
 
@@ -1639,6 +1653,8 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, StringRef isysroot) {
         Record.push_back(0);
         Record.push_back(0);
         Record.push_back(0);
+        // FIXME: cache support for standard C++ modules.
+        Record.push_back(0);
       } else {
         // If we have calculated signature, there is no need to store
         // the size or timestamp.
@@ -1650,6 +1666,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, StringRef isysroot) {
         llvm::append_range(Blob, M.Signature);
 
         AddPathBlob(M.FileName, Record, Blob);
+        AddStringBlob(M.ModuleCacheKey, Record, Blob);
       }
 
       Stream.EmitRecordWithBlob(AbbrevCode, Record, Blob);

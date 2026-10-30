@@ -25,6 +25,7 @@
 #include "clang/CAS/IncludeTree.h"
 #include "clang/Config/config.h"
 #include "clang/Frontend/ChainedDiagnosticConsumer.h"
+#include "clang/Frontend/CompileJobCacheKey.h"
 #include "clang/Frontend/CompileJobCacheResult.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -647,6 +648,26 @@ struct ReadModuleNames : ASTReaderListener {
     LoadedModules.clear();
   }
 };
+
+class CompileCacheASTReaderHelper : public ASTReaderListener {
+public:
+  CompileCacheASTReaderHelper(cas::ObjectStore &CAS, cas::ActionCache &Cache,
+                              ModuleCache &ModCache, DiagnosticsEngine &Diags)
+      : CAS(CAS), Cache(Cache), ModCache(ModCache), Diags(Diags) {}
+
+  bool readCASFileSystemRootID(StringRef RootID, bool Complain) override;
+  bool readModuleCacheKey(StringRef ModuleName, StringRef Filename,
+                          StringRef CacheKey) override;
+
+private:
+  bool checkCASID(bool Complain, StringRef RootID, unsigned ParseDiagID,
+                  unsigned MissingDiagID);
+
+  cas::ObjectStore &CAS;
+  cas::ActionCache &Cache;
+  ModuleCache &ModCache;
+  DiagnosticsEngine &Diags;
+};
 } // namespace
 
 void CompilerInstance::createPCHExternalASTSource(
@@ -661,7 +682,8 @@ void CompilerInstance::createPCHExternalASTSource(
       getASTContext(), getPCHContainerReader(), getCodeGenOpts(),
       getFrontendOpts().ModuleFileExtensions, DependencyCollectors,
       DeserializationListener, OwnDeserializationListener, Preamble,
-      getFrontendOpts().UseGlobalModuleIndex, std::move(PCHBuffer));
+      getFrontendOpts().UseGlobalModuleIndex, getOrCreateObjectStore(),
+      getOrCreateActionCache(), std::move(PCHBuffer));
 }
 
 IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
@@ -673,8 +695,8 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
     ArrayRef<std::shared_ptr<ModuleFileExtension>> Extensions,
     ArrayRef<std::shared_ptr<DependencyCollector>> DependencyCollectors,
     void *DeserializationListener, bool OwnDeserializationListener,
-    bool Preamble, bool UseGlobalModuleIndex,
-    std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
+    bool Preamble, bool UseGlobalModuleIndex, cas::ObjectStore &CAS,
+    cas::ActionCache &Cache, std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
   const HeaderSearchOptions &HSOpts =
       PP.getHeaderSearchInfo().getHeaderSearchOpts();
 
@@ -696,6 +718,9 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
 
   for (auto &Listener : DependencyCollectors)
     Listener->attachToASTReader(*Reader);
+
+  Reader->addListener(std::make_unique<CompileCacheASTReaderHelper>(
+      CAS, Cache, ModCache, PP.getDiagnostics()));
 
   auto Listener = std::make_unique<ReadModuleNames>(PP);
   auto &ListenerRef = *Listener;
@@ -2042,6 +2067,10 @@ void CompilerInstance::createASTReader() {
 
   for (auto &Listener : DependencyCollectors)
     Listener->attachToASTReader(*TheASTReader);
+
+  TheASTReader->addListener(std::make_unique<CompileCacheASTReaderHelper>(
+      getOrCreateObjectStore(), getOrCreateActionCache(), getModuleCache(),
+      getDiagnostics()));
 }
 
 bool CompilerInstance::loadModuleFile(
@@ -2690,4 +2719,126 @@ void CompilerInstance::resetAndLeakSema() { llvm::BuryPointer(takeSema()); }
 void CompilerInstance::setExternalSemaSource(
     IntrusiveRefCntPtr<ExternalSemaSource> ESS) {
   ExternalSemaSrc = std::move(ESS);
+}
+
+static bool addCachedModuleFileToInMemoryCache(
+    StringRef Path, StringRef CacheKey, StringRef Provider,
+    cas::ObjectStore &CAS, cas::ActionCache &Cache, ModuleCache &ModCache,
+    DiagnosticsEngine &Diags) {
+  [[maybe_unused]] off_t Size;
+  [[maybe_unused]] time_t ModTime;
+  if (ModCache.getInMemoryModuleCache().lookupPCM(Path, Size, ModTime))
+    return false;
+
+  auto ID = CAS.parseID(CacheKey);
+  if (!ID) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Path << CacheKey << ID.takeError();
+    return true;
+  }
+
+  auto Value = Cache.get(*ID);
+  if (!Value) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Path << CacheKey << Value.takeError();
+    return true;
+  }
+  if (!*Value) {
+    auto Diag = Diags.Report(diag::err_cas_missing_module) << Path << CacheKey;
+    std::string ErrStr("expected to be produced by:\n");
+    llvm::raw_string_ostream Err(ErrStr);
+    if (auto E = printCompileJobCacheKey(CAS, *ID, Err)) {
+      // Ignore the error and skip printing the cache key. The cache key can
+      // be setup by a different compiler that is using an unknown schema.
+      llvm::consumeError(std::move(E));
+      Diag << "module file is not available in the CAS";
+    } else
+      Diag << Err.str();
+
+    return true;
+  }
+  auto ValueRef = CAS.getReference(**Value);
+  if (!ValueRef) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Path << CacheKey << "result module cannot be loaded from CAS";
+
+    return true;
+  }
+
+  std::optional<cas::CompileJobCacheResult> Result;
+  auto Schema = cas::CompileJobResultSchema::create(CAS);
+  if (!Schema) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Path << CacheKey << Schema.takeError();
+    return true;
+  }
+  if (llvm::Error E = Schema->load(*ValueRef).moveInto(Result)) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Path << CacheKey << std::move(E);
+    return true;
+  }
+  auto Output =
+      Result->getOutput(cas::CompileJobCacheResult::OutputKind::MainOutput);
+  if (!Output) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Path << CacheKey << "cached module missing main output";
+    return true;
+  }
+  // FIXME: We wait to materialize each module file before proceeding, which
+  // introduces latency for a network CAS. Instead we should collect all the
+  // module keys and materialize them concurrently using \c getProxyFuture, for
+  // better network utilization.
+  auto OutputProxy = CAS.getProxy(Output->Object);
+  if (!OutputProxy) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Path << CacheKey << OutputProxy.takeError();
+    return true;
+  }
+
+  auto Buf = OutputProxy->getMemoryBuffer();
+  size_t BufSize = Buf->getBufferSize();
+  ModCache.getInMemoryModuleCache().addPCM(Path, std::move(Buf), BufSize,
+                                           /*ModTime=*/0);
+  return false;
+}
+
+bool CompilerInstance::addCachedModuleFile(StringRef Path, StringRef CacheKey,
+                                           StringRef Provider) {
+  return addCachedModuleFileToInMemoryCache(
+      Path, CacheKey, Provider, getOrCreateObjectStore(),
+      getOrCreateActionCache(), getModuleCache(), getDiagnostics());
+}
+
+bool CompileCacheASTReaderHelper::readModuleCacheKey(StringRef ModuleName,
+                                                     StringRef Filename,
+                                                     StringRef CacheKey) {
+  // FIXME: add name/path of the importing module?
+  return addCachedModuleFileToInMemoryCache(
+      Filename, CacheKey, "imported module", CAS, Cache, ModCache, Diags);
+}
+
+/// Verify that ID is in the CAS. Otherwise the module cache probably was
+/// created with a different CAS.
+bool CompileCacheASTReaderHelper::checkCASID(bool Complain, StringRef RootID,
+                                             unsigned ParseDiagID,
+                                             unsigned MissingDiagID) {
+  std::optional<cas::CASID> ID;
+  if (errorToBool(CAS.parseID(RootID).moveInto(ID))) {
+    if (Complain)
+      Diags.Report(ParseDiagID) << RootID;
+    return true;
+  }
+  if (errorToBool(CAS.getProxy(*ID).takeError())) {
+    if (Complain) {
+      Diags.Report(MissingDiagID) << RootID;
+    }
+    return true;
+  }
+  return false;
+}
+
+bool CompileCacheASTReaderHelper::readCASFileSystemRootID(StringRef RootID,
+                                                          bool Complain) {
+  return checkCASID(Complain, RootID, diag::err_cas_cannot_parse_root_id,
+                    diag::err_cas_missing_root_id);
 }

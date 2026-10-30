@@ -268,6 +268,17 @@ bool ChainedASTReaderListener::visitInputFile(StringRef Filename,
                                        isExplicitModule);
   return Continue;
 }
+bool ChainedASTReaderListener::readCASFileSystemRootID(StringRef RootID,
+                                                       bool Complain) {
+  return First->readCASFileSystemRootID(RootID, Complain) ||
+         Second->readCASFileSystemRootID(RootID, Complain);
+}
+bool ChainedASTReaderListener::readModuleCacheKey(StringRef ModuleName,
+                                                  StringRef Filename,
+                                                  StringRef CacheKey) {
+  return First->readModuleCacheKey(ModuleName, Filename, CacheKey) ||
+         Second->readModuleCacheKey(ModuleName, Filename, CacheKey);
+}
 
 void ChainedASTReaderListener::readModuleFileExtension(
        const ModuleFileExtensionMetadata &Metadata) {
@@ -3547,6 +3558,7 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       ModuleFileName ImportedFile;
       std::string StoredFile;
       bool IgnoreImportedByNote = false;
+      StringRef ImportedCacheKey;
 
       // For prebuilt and explicit modules first consult the file map for
       // an override. Note that here we don't search prebuilt module
@@ -3591,6 +3603,19 @@ ASTReader::ReadControlBlock(ModuleFile &F,
                 << F.FileName << !F.ModuleName.empty() << F.ModuleName;
             IgnoreImportedByNote = true;
           }
+        }
+
+        ImportedCacheKey = ReadStringBlob(Record, Idx, Blob);
+      }
+
+      if (!ImportedCacheKey.empty()) {
+        if (!Listener || Listener->readModuleCacheKey(
+                             ImportedName, ImportedFile, ImportedCacheKey)) {
+          Diag(diag::err_ast_file_not_found)
+              << moduleKindForDiagnostic(ImportedKind) << ImportedFile << true
+              << ("missing or unloadable module cache key" + ImportedCacheKey)
+                     .str();
+          return Failure;
         }
       }
 
@@ -3727,6 +3752,10 @@ ASTReader::ReadControlBlock(ModuleFile &F,
       F.InputFilesLoaded.resize(NumInputs);
       F.InputFileInfosLoaded.resize(NumInputs);
       F.NumUserInputFiles = NumUserInputs;
+      break;
+
+    case MODULE_CACHE_KEY:
+      F.ModuleCacheKey = Blob.str();
       break;
 
     case CAS_INCLUDE_TREE_ID:
@@ -6353,6 +6382,9 @@ bool ASTReader::readASTFileControlBlock(
 
       StringRef FilenameStr = ReadStringBlob(Record, Idx, Blob);
       auto Filename = ResolveImportedPath(PathBuf, FilenameStr, ModuleDir);
+      StringRef CacheKey = ReadStringBlob(Record, Idx, Blob);
+      if (!CacheKey.empty())
+        Listener.readModuleCacheKey(ModuleName, *Filename, CacheKey);
       Listener.visitImport(ModuleName, *Filename);
       break;
     }
@@ -6588,6 +6620,8 @@ Module *ASTReader::getSubmodule(uint32_t GlobalID) {
         F.DidReadTopLevelSubmodule = true;
         CurrentModule->setASTFileNameAndKey(F.FileName, F.FileKey);
         CurrentModule->PresumedModuleMapFile = F.ModuleMapPath;
+        if (!F.ModuleCacheKey.empty())
+          CurrentModule->setModuleCacheKey(F.ModuleCacheKey);
       }
 
       CurrentModule->Kind = Kind;

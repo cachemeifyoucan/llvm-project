@@ -15,6 +15,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DynamicRecursiveASTVisitor.h"
 #include "clang/CAS/IncludeTree.h"
+#include "clang/Frontend/CompileJobCacheResult.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/CompilerInvocation.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -138,7 +139,8 @@ protected:
   /// shared CAS and an empty base file system.
   bool run(ArrayRef<const char *> Args, FrontendAction &Action,
            TextDiagnosticBuffer *&Diags, bool ExpectErrors = false,
-           IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS = nullptr) {
+           IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS = nullptr,
+           llvm::function_ref<void(CompilerInstance &)> Configure = nullptr) {
     auto Invocation = std::make_shared<CompilerInvocation>();
     DiagnosticOptions DiagOpts;
     DiagsStorage = std::make_unique<TextDiagnosticBuffer>();
@@ -154,6 +156,8 @@ protected:
       BaseFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
     Compiler.createVirtualFileSystem(std::move(BaseFS), Diags);
     Compiler.createDiagnostics(Diags, /*ShouldOwnClient=*/false);
+    if (Configure)
+      Configure(Compiler);
     bool Success = Compiler.ExecuteAction(Action);
     if (!ExpectErrors)
       for (auto I = Diags->err_begin(), E = Diags->err_end(); I != E; ++I)
@@ -333,6 +337,162 @@ TEST_F(CASIncludeTreeTest, Module) {
   TextDiagnosticBuffer *Diags;
   ASSERT_TRUE(run(Args, Action, Diags));
   EXPECT_EQ(Diags->getNumErrors(), 0u);
+  EXPECT_TRUE(llvm::is_contained(Action.DeclNames, "use"));
+}
+
+TEST_F(CASIncludeTreeTest, ModuleFileCacheKey) {
+  if (!llvm::cas::isOnDiskCASEnabled())
+    GTEST_SKIP() << "needs a temporary directory for the module outputs";
+
+  llvm::unittest::TempDir Dir("include-tree-module-cache-key",
+                              /*Unique=*/true);
+
+  auto makeKey = [&](StringRef Name) {
+    std::optional<ObjectRef> Ref;
+    EXPECT_THAT_ERROR(DB->storeFromString({}, Name).moveInto(Ref), Succeeded());
+    return DB->getID(*Ref);
+  };
+
+  // Store the module file at \p PCMPath as the main output of a compile job
+  // with cache key \p Key, as -fcache-compile-job would have done.
+  auto cacheModule = [&](StringRef PCMPath, const CASID &Key) {
+    auto Buffer = llvm::MemoryBuffer::getFile(PCMPath);
+    ASSERT_TRUE(Buffer);
+    std::optional<ObjectRef> PCM;
+    ASSERT_THAT_ERROR(
+        DB->storeFromString({}, (*Buffer)->getBuffer()).moveInto(PCM),
+        Succeeded());
+    CompileJobCacheResult::Builder Builder;
+    Builder.addOutput(CompileJobCacheResult::OutputKind::MainOutput, *PCM);
+    std::optional<ObjectRef> Result;
+    ASSERT_THAT_ERROR(Builder.build(*DB).moveInto(Result), Succeeded());
+    ASSERT_THAT_ERROR(Cache->put(Key, DB->getID(*Result)), Succeeded());
+  };
+
+  auto makeModuleMap = [&](StringRef Name) {
+    std::optional<IncludeTree::Module> Mod;
+    EXPECT_THAT_ERROR(IncludeTree::Module::create(
+                          *DB, Name, "", IncludeTree::Module::ModuleFlags(), {},
+                          std::nullopt, std::nullopt, std::nullopt)
+                          .moveInto(Mod),
+                      Succeeded());
+    std::optional<IncludeTree::ModuleMap> MM;
+    EXPECT_THAT_ERROR(
+        IncludeTree::ModuleMap::create(*DB, {Mod->getRef()}).moveInto(MM),
+        Succeeded());
+    return MM->getRef();
+  };
+
+  auto getFileList = [&](StringRef RootID) {
+    std::optional<CASID> ID;
+    EXPECT_THAT_ERROR(DB->parseID(RootID).moveInto(ID), Succeeded());
+    std::optional<IncludeTreeRoot> Root;
+    EXPECT_THAT_ERROR(
+        IncludeTreeRoot::get(*DB, *DB->getReference(*ID)).moveInto(Root),
+        Succeeded());
+    return Root->getFileListRef();
+  };
+
+  auto makeImport = [&](StringRef Name, uint32_t Offset) {
+    std::optional<IncludeTree::ModuleImport> Import;
+    EXPECT_THAT_ERROR(
+        IncludeTree::ModuleImport::create(*DB, Name,
+                                          /*VisibilityOnly=*/false)
+            .moveInto(Import),
+        Succeeded());
+    return IncludeTree::IncludeInfo{Import->getRef(), Offset,
+                                    IncludeTree::NodeKind::ModuleImport};
+  };
+
+  // Build module 'A' as a cached compile job. The module file records its
+  // cache key.
+  CASID KeyA = makeKey("key A");
+  std::string PCMPathA = Dir.path("A.pcm").str().str();
+  std::string RootA;
+  {
+    IncludeTree Predefines = makePredefinesTree();
+    IncludeTree Header =
+        makeTree(addFile("A.h", "int from_a;\n"), {}, {}, StringRef("A"));
+    StringRef Includes = "#include \"A.h\"\n";
+    IncludeTree Main =
+        makeTree(addFile(Module::getModuleInputBufferName(), Includes),
+                 {include(Predefines, 0), include(Header, Includes.size())});
+    RootA = makeRoot(Main, std::nullopt, {}, makeModuleMap("A"));
+    const char *Args[] = {
+        "-fcas-include-tree", RootA.c_str(),     "-x",           "c",
+        "-fmodules",          "-fmodule-name=A", "-emit-module", "-o",
+        PCMPathA.c_str()};
+    GenerateModuleFromModuleMapAction Action;
+    TextDiagnosticBuffer *Diags;
+    ASSERT_TRUE(
+        run(Args, Action, Diags, /*ExpectErrors=*/false, nullptr,
+            [&](CompilerInstance &CI) { CI.setCompileJobCacheKey(KeyA); }));
+  }
+  cacheModule(PCMPathA, KeyA);
+
+  // Build module 'B', which imports 'A' through its cache key. The include-tree
+  // file system cannot see the module file on disk.
+  CASID KeyB = makeKey("key B");
+  std::string PCMPathB = Dir.path("B.pcm").str().str();
+  std::string RootB;
+  {
+    IncludeTree Predefines = makePredefinesTree();
+    StringRef HeaderIncludes = "#include \"A.h\"\n";
+    IncludeTree Header =
+        makeTree(addFile("B.h", (HeaderIncludes + "int from_b;\n").str()),
+                 {makeImport("A", HeaderIncludes.size())}, {}, StringRef("B"));
+    StringRef Includes = "#include \"B.h\"\n";
+    IncludeTree Main =
+        makeTree(addFile(Module::getModuleInputBufferName(), Includes),
+                 {include(Predefines, 0), include(Header, Includes.size())});
+    RootB =
+        makeRoot(Main, std::nullopt, {getFileList(RootA)}, makeModuleMap("B"));
+    std::string KeyAStr = KeyA.toString();
+    std::string ModuleFileA = "-fmodule-file=A=" + PCMPathA;
+    const char *Args[] = {"-fcas-include-tree",
+                          RootB.c_str(),
+                          "-x",
+                          "c",
+                          "-fmodules",
+                          "-fmodule-name=B",
+                          "-emit-module",
+                          "-fmodule-file-cache-key",
+                          PCMPathA.c_str(),
+                          KeyAStr.c_str(),
+                          ModuleFileA.c_str(),
+                          "-o",
+                          PCMPathB.c_str()};
+    GenerateModuleFromModuleMapAction Action;
+    TextDiagnosticBuffer *Diags;
+    ASSERT_TRUE(
+        run(Args, Action, Diags, /*ExpectErrors=*/false, nullptr,
+            [&](CompilerInstance &CI) { CI.setCompileJobCacheKey(KeyB); }));
+  }
+  cacheModule(PCMPathB, KeyB);
+
+  // Import 'B' through its cache key. 'A' is found through the cache key that
+  // 'B' recorded for its import.
+  IncludeTree Predefines = makePredefinesTree();
+  StringRef Includes = "#include \"B.h\"\n";
+  IncludeTree Main =
+      makeTree(addFile("t.c", (Includes + "int use = sizeof(from_b);\n").str()),
+               {include(Predefines, 0), makeImport("B", Includes.size())});
+  std::string RootTU = makeRoot(Main, std::nullopt, {getFileList(RootB)});
+  std::string KeyBStr = KeyB.toString();
+  std::string ModuleFileB = "-fmodule-file=B=" + PCMPathB;
+  const char *Args[] = {"-fcas-include-tree",
+                        RootTU.c_str(),
+                        "-x",
+                        "c",
+                        "-fmodules",
+                        "-fsyntax-only",
+                        "-fmodule-file-cache-key",
+                        PCMPathB.c_str(),
+                        KeyBStr.c_str(),
+                        ModuleFileB.c_str()};
+  CollectDeclsAction Action;
+  TextDiagnosticBuffer *Diags;
+  ASSERT_TRUE(run(Args, Action, Diags));
   EXPECT_TRUE(llvm::is_contained(Action.DeclNames, "use"));
 }
 
