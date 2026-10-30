@@ -406,7 +406,8 @@ public:
   unsigned CacheCompileJob : 1;
 
   /// Whether this invocation is dependency scanning for include-tree. Used to
-  /// separate module cache for include-tree from cas-fs.
+  /// keep the PCMs of include-tree scans apart from other PCMs in the module
+  /// cache.
   unsigned ForIncludeTreeScan : 1;
 
   /// Avoid checking if the compile job is already cached, force compilation and

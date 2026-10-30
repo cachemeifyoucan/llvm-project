@@ -5639,7 +5639,7 @@ std::string CompilerInvocation::computeContextHash() const {
     HBuilder.add(SanHash.Mask);
 
   // Caching + implicit modules, which is only set in clang-scan-deps, puts
-  // additional CASIDs in the pcm for either cas-fs or include-tree.
+  // the include-tree ID in the pcm.
   HBuilder.add(getFrontendOpts().CacheCompileJob,
                getFrontendOpts().ForIncludeTreeScan);
 

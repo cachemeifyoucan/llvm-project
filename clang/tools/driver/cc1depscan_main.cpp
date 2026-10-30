@@ -466,8 +466,6 @@ static int scanAndUpdateCC1UsingDaemon(
     return 1;
   };
 
-  // FIXME: Skip some of this if -fcas-fs has been passed.
-
   bool NoSpawnDaemon = (bool)Sharing.Path;
   // llvm::dbgs() << "connecting to daemon...\n";
   auto Daemon = NoSpawnDaemon
