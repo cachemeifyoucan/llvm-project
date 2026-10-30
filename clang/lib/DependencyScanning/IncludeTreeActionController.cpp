@@ -317,6 +317,12 @@ void IncludeTreeActionController::initializeScanInvocation(
 
 bool IncludeTreeActionController::initialize(
     CompilerInstance &ScanInstance, CompilerInvocation &NewInvocation) {
+  // Reset the state of a previous scan, so that the controller can be reused
+  // across the queries of a by-name scan.
+  PrefixMapper = llvm::PrefixMapper();
+  BuilderStack.clear();
+  IncludeTreeResult.reset();
+
   DepscanPrefixMapping::configurePrefixMapper(NewInvocation, PrefixMapper);
 
   auto ensurePathRemapping = [&]() {

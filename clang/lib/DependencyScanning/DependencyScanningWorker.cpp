@@ -1375,12 +1375,8 @@ bool DependencyScanningWorker::computeDependenciesByName(
 
   bool AllScansSucceeded = true;
   while (std::optional<std::string> NextName = getNextName()) {
-    // FIXME: Make IncludeTreeActionController re-entrant and avoid cloning
-    // here. The controller is not re-entrant across names, so each query gets
-    // its own clone.
-    auto ControllerClone = Controller.clone();
     bool Success =
-        CIWC->computeDependencies(*NextName, DepConsumer, *ControllerClone);
+        CIWC->computeDependencies(*NextName, DepConsumer, Controller);
     DepConsumer.finishQuery(*NextName, Success);
     AllScansSucceeded = AllScansSucceeded && Success;
   }
