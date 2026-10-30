@@ -99,7 +99,7 @@ void dependencies::configureInvocationForCaching(CowCompilerInvocation &CI,
     HSOpts.ResourceDir = std::move(OriginalHSOpts.ResourceDir);
     // Preserve fmodule-file options.
     HSOpts.PrebuiltModuleFiles = std::move(OriginalHSOpts.PrebuiltModuleFiles);
-    // Preserve -gmodules (see below for caveats).
+    // Preserve -gmodules.
     HSOpts.ModuleFormat = OriginalHSOpts.ModuleFormat;
     HSOpts.UseBuiltinIncludes = false;
     HSOpts.UseStandardSystemIncludes = false;
