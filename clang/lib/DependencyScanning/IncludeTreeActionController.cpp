@@ -434,6 +434,7 @@ bool IncludeTreeActionController::initializeModuleBuild(
         return std::make_unique<LookupPCHModulesListener>(R);
       });
   ModuleScanInstance.addDependencyCollector(std::move(DC));
+  ModuleScanInstance.setPrefixMapper(PrefixMapper);
 
   return true;
 }
@@ -480,6 +481,8 @@ bool IncludeTreeActionController::finalizeModuleInvocation(
 
   configureInvocationForCaching(CowCI, CASOpts, *MD.IncludeTreeID,
                                 CachingInputKind::IncludeTree);
+
+  DepscanPrefixMapping::remapInvocationPaths(CowCI, PrefixMapper);
 
   return true;
 }

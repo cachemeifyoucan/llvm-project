@@ -181,6 +181,11 @@ void DepscanPrefixMapping::remapInvocationPaths(
     Res.Replace = Mapper.map(Path, NewPath);
     return Res;
   });
+
+  // The module file paths of -fmodule-file-cache-key are not visited above,
+  // but they need to match the remapped -fmodule-file paths.
+  for (auto &[Path, _] : FrontendOpts.ModuleCacheKeys)
+    Mapper.mapInPlace(Path);
 }
 
 void DepscanPrefixMapping::configurePrefixMapper(const CompilerInvocation &CI,

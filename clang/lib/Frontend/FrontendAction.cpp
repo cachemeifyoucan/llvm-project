@@ -579,7 +579,7 @@ operator+=(SmallVectorImpl<char> &Includes, StringRef RHS) {
 static void addHeaderInclude(StringRef HeaderName,
                              SmallVectorImpl<char> &Includes,
                              const LangOptions &LangOpts,
-                             bool IsExternC) {
+                             llvm::PrefixMapper &PrefixMapper, bool IsExternC) {
   if (IsExternC && LangOpts.CPlusPlus)
     Includes += "extern \"C\" {\n";
   if (LangOpts.ObjC)
@@ -587,7 +587,13 @@ static void addHeaderInclude(StringRef HeaderName,
   else
     Includes += "#include \"";
 
-  Includes += HeaderName;
+  if (PrefixMapper.empty() || llvm::sys::path::is_relative(HeaderName)) {
+    Includes += HeaderName;
+  } else {
+    SmallString<128> MappedPath;
+    PrefixMapper.map(HeaderName, MappedPath);
+    Includes += MappedPath;
+  }
 
   Includes += "\"\n";
   if (IsExternC && LangOpts.CPlusPlus)
@@ -602,8 +608,9 @@ static void addHeaderInclude(StringRef HeaderName,
 /// \param Includes Will be augmented with the set of \#includes or \#imports
 /// needed to load all of the named headers.
 static std::error_code collectModuleHeaderIncludes(
-    const LangOptions &LangOpts, FileManager &FileMgr, DiagnosticsEngine &Diag,
-    ModuleMap &ModMap, clang::Module *Module, SmallVectorImpl<char> &Includes) {
+    const LangOptions &LangOpts, llvm::PrefixMapper &PrefixMapper,
+    FileManager &FileMgr, DiagnosticsEngine &Diag, ModuleMap &ModMap,
+    clang::Module *Module, SmallVectorImpl<char> &Includes) {
   // Don't collect any headers for unavailable modules.
   if (!Module->isAvailable())
     return std::error_code();
@@ -632,7 +639,7 @@ static std::error_code collectModuleHeaderIncludes(
       // the module map file) so this will find the same file that we found
       // while parsing the module map.
       addHeaderInclude(H.PathRelativeToRootModuleDirectory, Includes, LangOpts,
-                       Module->IsExternC);
+                       PrefixMapper, Module->IsExternC);
     }
   }
   // Note that Module->PrivateHeaders will not be a TopHeader.
@@ -643,7 +650,7 @@ static std::error_code collectModuleHeaderIncludes(
     if (Module->Parent)
       // Include the umbrella header for submodules.
       addHeaderInclude(UmbrellaHeader->PathRelativeToRootModuleDirectory,
-                       Includes, LangOpts, Module->IsExternC);
+                       Includes, LangOpts, PrefixMapper, Module->IsExternC);
   } else if (std::optional<Module::DirectoryName> UmbrellaDir =
                  Module->getUmbrellaDirAsWritten()) {
     // Add all of the headers we find in this subdirectory.
@@ -699,14 +706,15 @@ static std::error_code collectModuleHeaderIncludes(
 
       // Include this header as part of the umbrella directory.
       Module->addTopHeader(*Header);
-      addHeaderInclude(RelPath, Includes, LangOpts, Module->IsExternC);
+      addHeaderInclude(RelPath, Includes, LangOpts, PrefixMapper,
+                       Module->IsExternC);
     }
   }
 
   // Recurse into submodules.
   for (clang::Module *Submodule : Module->submodules())
     if (std::error_code Err = collectModuleHeaderIncludes(
-            LangOpts, FileMgr, Diag, ModMap, Submodule, Includes))
+            LangOpts, PrefixMapper, FileMgr, Diag, ModMap, Submodule, Includes))
       return Err;
 
   return std::error_code();
@@ -973,9 +981,10 @@ getInputBufferForModule(CompilerInstance &CI, Module *M) {
   if (std::optional<Module::Header> UmbrellaHeader =
           M->getUmbrellaHeaderAsWritten())
     addHeaderInclude(UmbrellaHeader->PathRelativeToRootModuleDirectory,
-                     HeaderContents, CI.getLangOpts(), M->IsExternC);
+                     HeaderContents, CI.getLangOpts(), CI.getPrefixMapper(),
+                     M->IsExternC);
   Err = collectModuleHeaderIncludes(
-      CI.getLangOpts(), FileMgr, CI.getDiagnostics(),
+      CI.getLangOpts(), CI.getPrefixMapper(), FileMgr, CI.getDiagnostics(),
       CI.getPreprocessor().getHeaderSearchInfo().getModuleMap(), M,
       HeaderContents);
 
