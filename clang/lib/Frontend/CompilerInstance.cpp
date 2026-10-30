@@ -2853,7 +2853,7 @@ static bool addCachedModuleFileToInMemoryCacheFromID(StringRef Filename,
   auto ModuleRef = CAS.getReference(*ID);
   if (!ModuleRef) {
     Diags.Report(diag::err_cas_unloadable_module)
-        << Filename << 1 << CASID << "does not exist in CAS";
+        << Filename << 0 << CASID << "does not exist in CAS";
 
     return true;
   }
