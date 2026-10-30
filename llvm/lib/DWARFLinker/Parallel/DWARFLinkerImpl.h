@@ -38,7 +38,8 @@ public:
   void addObjectFile(
       DWARFFile &File, ObjFileLoaderTy Loader = nullptr,
 
-      CompileUnitHandlerTy OnCUDieLoaded = [](const DWARFUnit &) {}) override;
+      CompileUnitHandlerTy OnCUDieLoaded = [](const DWARFUnit &) {},
+      CASLoaderTy CASLoader = nullptr) override;
 
   /// Link debug info for added files.
   Error link() override;
@@ -212,7 +213,7 @@ protected:
     /// hash.
     bool registerModuleReference(const DWARFDie &CUDie, ObjFileLoaderTy Loader,
                                  CompileUnitHandlerTy OnCUDieLoaded,
-                                 unsigned Indent = 0);
+                                 CASLoaderTy CASLoader, unsigned Indent = 0);
 
     /// Recursively add the debug info in this clang module .pcm
     /// file (and all the modules imported by it in a bottom-up fashion)
@@ -220,7 +221,7 @@ protected:
     Error loadClangModule(ObjFileLoaderTy Loader, const DWARFDie &CUDie,
                           const std::string &PCMFile,
                           CompileUnitHandlerTy OnCUDieLoaded,
-                          unsigned Indent = 0);
+                          CASLoaderTy CASLoader, unsigned Indent = 0);
 
     /// Computes the total size of the debug info.
     uint64_t getInputDebugInfoSize() const {
