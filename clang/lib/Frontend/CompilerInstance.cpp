@@ -676,11 +676,7 @@ void CompilerInstance::createPCHExternalASTSource(
     bool OwnDeserializationListener,
     std::unique_ptr<llvm::MemoryBuffer> PCHBuffer) {
   bool Preamble = getPreprocessorOpts().PrecompiledPreambleBytes.first != 0;
-  auto [CAS, Cache] = getCASDatabases();
-  if (getFrontendOpts().ModuleLoadIgnoreCAS) {
-    CAS = nullptr;
-    Cache = nullptr;
-  }
+  auto [CAS, Cache] = getCASDatabasesForModuleLoading();
   TheASTReader = createPCHExternalASTSource(
       Path, getHeaderSearchOpts().Sysroot, DisableValidation,
       AllowPCHWithCompilerErrors, getPreprocessor(), getModuleCache(),
@@ -993,6 +989,18 @@ CompilerInstance::getOrCreateCASDatabases(DiagnosticsEngine *Diags) {
   // use the same CAS.
   std::tie(CAS, ActionCache) =
       getCASOpts().createDatabases(*Diags, /*CreateEmptyDBsOnFailure=*/true);
+  return {CAS, ActionCache};
+}
+
+std::pair<std::shared_ptr<llvm::cas::ObjectStore>,
+          std::shared_ptr<llvm::cas::ActionCache>>
+CompilerInstance::getCASDatabasesForModuleLoading() {
+  if (getFrontendOpts().ModuleLoadIgnoreCAS)
+    return {};
+  // Use a CAS that was configured explicitly, even if nothing else in this
+  // compilation needs it, but don't create an in-memory CAS just for this.
+  if ((!CAS || !ActionCache) && getCASOpts())
+    return getOrCreateCASDatabases();
   return {CAS, ActionCache};
 }
 
@@ -2078,9 +2086,10 @@ void CompilerInstance::createASTReader() {
 
   // Module files may refer to the modules they import by their cache keys,
   // which can only be resolved if this compilation uses a CAS.
-  if (CAS && ActionCache && !FEOpts.ModuleLoadIgnoreCAS)
+  if (auto [LoadCAS, LoadCache] = getCASDatabasesForModuleLoading();
+      LoadCAS && LoadCache)
     TheASTReader->addListener(std::make_unique<CompileCacheASTReaderHelper>(
-        *CAS, *ActionCache, getModuleCache(), getDiagnostics()));
+        *LoadCAS, *LoadCache, getModuleCache(), getDiagnostics()));
 }
 
 bool CompilerInstance::loadModuleFile(

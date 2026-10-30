@@ -1003,6 +1003,14 @@ private:
       ArrayRef<std::string> DirectoryDependencies = {},
       std::optional<ThreadSafeCloneConfig> ThreadSafeConfig = std::nullopt);
 
+  /// Get the CAS databases to resolve the CAS references recorded in the
+  /// module files and PCHs this instance loads, or a pair of null pointers if
+  /// they should be ignored. A CAS that is configured but not open yet is
+  /// opened.
+  std::pair<std::shared_ptr<llvm::cas::ObjectStore>,
+            std::shared_ptr<llvm::cas::ActionCache>>
+  getCASDatabasesForModuleLoading();
+
 public:
   /// Creates a new \c CompilerInstance for compiling a module.
   ///
