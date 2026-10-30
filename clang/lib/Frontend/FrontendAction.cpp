@@ -1413,7 +1413,8 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
   // Provide any modules from the action cache.
   for (const auto &KeyPair : CI.getFrontendOpts().ModuleCacheKeys)
     if (CI.addCachedModuleFile(KeyPair.first, KeyPair.second,
-                               "-fmodule-file-cache-key"))
+                               "-fmodule-file-cache-key",
+                               /*IsKey=*/true))
       return false;
 
   // If compiling implementation of a module, load its module map file now.

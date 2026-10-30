@@ -658,6 +658,8 @@ public:
   bool readIncludeTreeID(StringRef ID, bool Complain) override;
   bool readModuleCacheKey(StringRef ModuleName, StringRef Filename,
                           StringRef CacheKey) override;
+  bool readModuleCASID(StringRef ModuleName, StringRef Filename,
+                       StringRef CASID) override;
 
 private:
   bool checkCASID(bool Complain, StringRef RootID, unsigned ParseDiagID,
@@ -2740,30 +2742,59 @@ void CompilerInstance::setExternalSemaSource(
   ExternalSemaSrc = std::move(ESS);
 }
 
-static bool addCachedModuleFileToInMemoryCache(
+static bool addCachedModuleFileToInMemoryCache(StringRef Path,
+                                               cas::ObjectStore &CAS,
+                                               cas::ObjectRef Object,
+                                               ModuleCache &ModCache,
+                                               DiagnosticsEngine &Diags) {
+  // FIXME: We wait to materialize each module file before proceeding, which
+  // introduces latency for a network CAS. Instead we should collect all the
+  // module keys and materialize them concurrently using \c getProxyFuture, for
+  // better network utilization.
+  auto OutputProxy = CAS.getProxy(Object);
+  if (!OutputProxy) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Path << 0 << CAS.getID(Object).toString() << OutputProxy.takeError();
+    return true;
+  }
+
+  auto PCMID = OutputProxy->getID().toString();
+  if (const auto *PCM = ModCache.getInMemoryModuleCache().lookup(Path)) {
+    // If the CASID in the module cache differs, return error.
+    if (!PCM->CASID.empty() && PCM->CASID != PCMID)
+      return true;
+
+    return false;
+  }
+
+  auto Buf = OutputProxy->getMemoryBuffer();
+  size_t BufSize = Buf->getBufferSize();
+  time_t ModTime = 0;
+  ModCache.getInMemoryModuleCache().addPCM(
+      Path, std::move(Buf), BufSize, ModTime, OutputProxy->getID().toString());
+  return false;
+}
+
+static bool addCachedModuleFileToInMemoryCacheFromKey(
     StringRef Path, StringRef CacheKey, StringRef Provider,
     cas::ObjectStore &CAS, cas::ActionCache &Cache, ModuleCache &ModCache,
     DiagnosticsEngine &Diags) {
-  [[maybe_unused]] off_t Size;
-  [[maybe_unused]] time_t ModTime;
-  if (ModCache.getInMemoryModuleCache().lookupPCM(Path, Size, ModTime))
-    return false;
-
   auto ID = CAS.parseID(CacheKey);
   if (!ID) {
     Diags.Report(diag::err_cas_unloadable_module)
-        << Path << CacheKey << ID.takeError();
+        << Path << 1 << CacheKey << ID.takeError();
     return true;
   }
 
   auto Value = Cache.get(*ID);
   if (!Value) {
     Diags.Report(diag::err_cas_unloadable_module)
-        << Path << CacheKey << Value.takeError();
+        << Path << 1 << CacheKey << Value.takeError();
     return true;
   }
   if (!*Value) {
-    auto Diag = Diags.Report(diag::err_cas_missing_module) << Path << CacheKey;
+    auto Diag = Diags.Report(diag::err_cas_missing_module)
+                << Path << CacheKey;
     std::string ErrStr("expected to be produced by:\n");
     llvm::raw_string_ostream Err(ErrStr);
     if (auto E = printCompileJobCacheKey(CAS, *ID, Err)) {
@@ -2779,7 +2810,7 @@ static bool addCachedModuleFileToInMemoryCache(
   auto ValueRef = CAS.getReference(**Value);
   if (!ValueRef) {
     Diags.Report(diag::err_cas_unloadable_module)
-        << Path << CacheKey << "result module cannot be loaded from CAS";
+        << Path << 1 << CacheKey << "result module cannot be loaded from CAS";
 
     return true;
   }
@@ -2788,45 +2819,59 @@ static bool addCachedModuleFileToInMemoryCache(
   auto Schema = cas::CompileJobResultSchema::create(CAS);
   if (!Schema) {
     Diags.Report(diag::err_cas_unloadable_module)
-        << Path << CacheKey << Schema.takeError();
+        << Path << 1 << CacheKey << Schema.takeError();
     return true;
   }
   if (llvm::Error E = Schema->load(*ValueRef).moveInto(Result)) {
     Diags.Report(diag::err_cas_unloadable_module)
-        << Path << CacheKey << std::move(E);
+        << Path << 1 << CacheKey << std::move(E);
     return true;
   }
   auto Output =
       Result->getOutput(cas::CompileJobCacheResult::OutputKind::MainOutput);
   if (!Output) {
     Diags.Report(diag::err_cas_unloadable_module)
-        << Path << CacheKey << "cached module missing main output";
-    return true;
-  }
-  // FIXME: We wait to materialize each module file before proceeding, which
-  // introduces latency for a network CAS. Instead we should collect all the
-  // module keys and materialize them concurrently using \c getProxyFuture, for
-  // better network utilization.
-  auto OutputProxy = CAS.getProxy(Output->Object);
-  if (!OutputProxy) {
-    Diags.Report(diag::err_cas_unloadable_module)
-        << Path << CacheKey << OutputProxy.takeError();
+        << Path << 1 << CacheKey << "cached module missing main output";
     return true;
   }
 
-  auto Buf = OutputProxy->getMemoryBuffer();
-  size_t BufSize = Buf->getBufferSize();
-  ModCache.getInMemoryModuleCache().addPCM(Path, std::move(Buf), BufSize,
-                                           /*ModTime=*/0,
-                                           OutputProxy->getID().toString());
-  return false;
+  return addCachedModuleFileToInMemoryCache(Path, CAS, Output->Object, ModCache,
+                                            Diags);
 }
 
-bool CompilerInstance::addCachedModuleFile(StringRef Path, StringRef CacheKey,
-                                           StringRef Provider) {
-  return addCachedModuleFileToInMemoryCache(
-      Path, CacheKey, Provider, getOrCreateObjectStore(),
-      getOrCreateActionCache(), getModuleCache(), getDiagnostics());
+static bool addCachedModuleFileToInMemoryCacheFromID(StringRef Filename,
+                                                     cas::ObjectStore &CAS,
+                                                     StringRef CASID,
+                                                     ModuleCache &ModCache,
+                                                     DiagnosticsEngine &Diags) {
+  auto ID = CAS.parseID(CASID);
+  if (!ID) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Filename << 0 << CASID << ID.takeError();
+    return true;
+  }
+  auto ModuleRef = CAS.getReference(*ID);
+  if (!ModuleRef) {
+    Diags.Report(diag::err_cas_unloadable_module)
+        << Filename << 1 << CASID << "does not exist in CAS";
+
+    return true;
+  }
+
+  return addCachedModuleFileToInMemoryCache(Filename, CAS, *ModuleRef, ModCache,
+                                            Diags);
+}
+
+bool CompilerInstance::addCachedModuleFile(StringRef Path, StringRef CASID,
+                                           StringRef Provider, bool IsKey) {
+  if (IsKey)
+    return addCachedModuleFileToInMemoryCacheFromKey(
+        Path, CASID, Provider, getOrCreateObjectStore(),
+        getOrCreateActionCache(), getModuleCache(), getDiagnostics());
+
+  return addCachedModuleFileToInMemoryCacheFromID(
+      Path, getOrCreateObjectStore(), CASID, getModuleCache(),
+      getDiagnostics());
 }
 
 bool CompileCacheASTReaderHelper::checkCASID(bool Complain, StringRef RootID,
@@ -2859,6 +2904,13 @@ bool CompileCacheASTReaderHelper::readModuleCacheKey(StringRef ModuleName,
                                                      StringRef Filename,
                                                      StringRef CacheKey) {
   // FIXME: add name/path of the importing module?
-  return addCachedModuleFileToInMemoryCache(
+  return addCachedModuleFileToInMemoryCacheFromKey(
       Filename, CacheKey, "imported module", CAS, Cache, ModCache, Diags);
+}
+
+bool CompileCacheASTReaderHelper::readModuleCASID(StringRef ModuleName,
+                                                  StringRef Filename,
+                                                  StringRef CASID) {
+  return addCachedModuleFileToInMemoryCacheFromID(Filename, CAS, CASID,
+                                                  ModCache, Diags);
 }

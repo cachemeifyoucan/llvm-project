@@ -1078,8 +1078,8 @@ public:
   /// "-fmodule-file-cache-key", or an imported pcm file. Used in diagnostics.
   ///
   /// \returns true on failure.
-  bool addCachedModuleFile(StringRef Path, StringRef CacheKey,
-                           StringRef Provider);
+  bool addCachedModuleFile(StringRef Path, StringRef CASID, StringRef Provider,
+                           bool IsKey);
 
   ModuleCache &getModuleCache() const { return *ModCache; }
   std::shared_ptr<ModuleCache> getModuleCachePtr() const { return ModCache; }

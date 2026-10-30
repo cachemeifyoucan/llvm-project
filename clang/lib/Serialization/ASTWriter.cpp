@@ -1613,6 +1613,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, StringRef isysroot) {
         BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1));       // C++20/prebuilt HU
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File size
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File timestamp
+    Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // CASIDIsKey
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File name raw kind
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File name len
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // Cache key len
@@ -1652,21 +1653,32 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, StringRef isysroot) {
         Record.push_back(0);
         Record.push_back(0);
         Record.push_back(0);
-        Record.push_back(0);
         // FIXME: cache support for standard C++ modules.
+        Record.push_back(0);
+        Record.push_back(0);
         Record.push_back(0);
       } else {
         // If we have calculated signature, there is no need to store
         // the size or timestamp.
         Record.push_back(M.Signature ? 0 : M.Size);
         Record.push_back(M.Signature ? 0 : getTimestampForOutput(M.ModTime));
+        // Encode CacheKey if it is implicit module, otherwise encode CASID of
+        // module file.
+        bool CASIDIsKey = M.Kind == serialization::MK_ImplicitModule;
+        Record.push_back(CASIDIsKey);
 
         Record.push_back(M.FileName.getRawKind());
 
         llvm::append_range(Blob, M.Signature);
 
         AddPathBlob(M.FileName, Record, Blob);
-        AddStringBlob(M.ModuleCacheKey, Record, Blob);
+        if (CASIDIsKey)
+          AddStringBlob(M.ModuleCacheKey, Record, Blob);
+        else {
+          assert(!(M.CASID.empty() && !M.ModuleCacheKey.empty()) &&
+                 "should not have module cache key without CASID");
+          AddStringBlob(M.CASID, Record, Blob);
+        }
       }
 
       Stream.EmitRecordWithBlob(AbbrevCode, Record, Blob);
