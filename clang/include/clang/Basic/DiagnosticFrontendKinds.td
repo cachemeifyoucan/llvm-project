@@ -261,6 +261,8 @@ def err_missing_module_name : Error<
 def err_file_is_not_module : Error<"file '%0' is not a module file">, DefaultFatal;
 def err_missing_module : Error<
   "no module named '%0' declared in module map file '%1'">, DefaultFatal;
+def err_missing_module_include_tree : Error<
+  "no module named '%0' declared in include-tree module map '%1'">, DefaultFatal;
 def err_no_submodule : Error<"no submodule named %0 in module '%1'">;
 def err_no_submodule_suggest : Error<
   "no submodule named %0 in module '%1'; did you mean '%2'?">;

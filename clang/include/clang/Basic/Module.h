@@ -356,6 +356,10 @@ public:
     /// This is a C++20 header unit.
     ModuleHeaderUnit,
 
+    /// This is a module that was defined by a module map and built out
+    /// of header files as part of an \c IncludeTree.
+    IncludeTreeModuleMap,
+
     /// This is a C++20 module interface unit.
     ModuleInterfaceUnit,
 
@@ -450,7 +454,9 @@ public:
 
   bool isPrivateModule() const { return Kind == PrivateModuleFragment; }
 
-  bool isModuleMapModule() const { return Kind == ModuleMapModule; }
+  bool isModuleMapModule() const {
+    return Kind == ModuleMapModule || Kind == IncludeTreeModuleMap;
+  }
 
 private:
   /// The submodules of this module, indexed by name.
@@ -600,6 +606,11 @@ public:
   /// Whether this is an inferred submodule (module * { ... }).
   LLVM_PREFERRED_TYPE(bool)
   unsigned IsInferred : 1;
+
+  /// Whether this is an inferred submodule that's missing from the umbrella
+  /// header.
+  LLVM_PREFERRED_TYPE(bool)
+  unsigned IsInferredMissingFromUmbrellaHeader : 1;
 
   /// Whether we should infer submodules for this module based on
   /// the headers.

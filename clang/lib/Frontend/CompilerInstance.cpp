@@ -13,6 +13,7 @@
 #include "clang/Basic/AtomicLineLogger.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticCAS.h"
 #include "clang/Basic/DiagnosticFrontend.h"
 #include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/FileManager.h"
@@ -792,6 +793,52 @@ CompilerInstance::createCodeCompletionConsumer(Preprocessor &PP,
   return new PrintingCodeCompleteConsumer(Opts, OS);
 }
 
+static void loadAPINotesFromIncludeTree(cas::ObjectStore &DB,
+                                        api_notes::APINotesManager &APINotes,
+                                        DiagnosticsEngine &Diags,
+                                        StringRef IncludeTreeRootID) {
+  Expected<llvm::cas::CASID> RootID = DB.parseID(IncludeTreeRootID);
+  if (!RootID) {
+    llvm::consumeError(RootID.takeError());
+    Diags.Report(diag::err_cas_cannot_parse_include_tree_id)
+        << IncludeTreeRootID;
+    return;
+  }
+  std::optional<llvm::cas::ObjectRef> Ref = DB.getReference(*RootID);
+  if (!Ref) {
+    Diags.Report(diag::err_cas_missing_include_tree_id) << IncludeTreeRootID;
+    return;
+  }
+  auto Root = cas::IncludeTreeRoot::get(DB, *Ref);
+  if (!Root) {
+    consumeError(Root.takeError());
+    Diags.Report(diag::err_cas_missing_include_tree_id) << IncludeTreeRootID;
+    return;
+  }
+  auto Notes = Root->getAPINotes();
+  if (!Notes) {
+    consumeError(Notes.takeError());
+    Diags.Report(diag::err_cas_cannot_load_api_notes_include_tree)
+        << IncludeTreeRootID;
+    return;
+  }
+  if (!*Notes)
+    return;
+  std::vector<StringRef> Buffers;
+
+  if (auto E = (*Notes)->forEachAPINotes([&](StringRef Buffer) {
+        Buffers.push_back(Buffer);
+        return llvm::Error::success();
+      })) {
+    consumeError(std::move(E));
+    Diags.Report(diag::err_cas_cannot_load_api_notes_include_tree)
+        << IncludeTreeRootID;
+    return;
+  }
+
+  APINotes.loadCurrentModuleAPINotesFromBuffer(Buffers);
+}
+
 void CompilerInstance::createSema(TranslationUnitKind TUKind,
                                   CodeCompleteConsumer *CompletionConsumer) {
   TheSema.reset(new Sema(getPreprocessor(), getASTContext(), getASTConsumer(),
@@ -809,9 +856,16 @@ void CompilerInstance::createSema(TranslationUnitKind TUKind,
   // If we're building a module and are supposed to load API notes,
   // notify the API notes manager.
   if (auto *currentModule = getPreprocessor().getCurrentModule()) {
-    (void)TheSema->APINotes.loadCurrentModuleAPINotes(
-        currentModule, getLangOpts().APINotesModules,
-        getAPINotesOpts().ModuleSearchPaths);
+    // If using include tree, APINotes for current module is loaded from include
+    // tree.
+    if (getFrontendOpts().CASIncludeTreeID.empty())
+      (void)TheSema->APINotes.loadCurrentModuleAPINotes(
+          currentModule, getLangOpts().APINotesModules,
+          getAPINotesOpts().ModuleSearchPaths);
+    else
+      loadAPINotesFromIncludeTree(getOrCreateObjectStore(), TheSema->APINotes,
+                                  getDiagnostics(),
+                                  getFrontendOpts().CASIncludeTreeID);
   }
 }
 
@@ -980,8 +1034,21 @@ void CompilerInstance::initializeDelayedInputFileFromCAS() {
       return reportError(FilenameBlob.takeError());
 
     auto InputFilename = FilenameBlob->getData();
-    Opts.Inputs.emplace_back(Root->getRef(), InputFilename, Opts.DashX,
-                             /*isSystem=*/false);
+
+    if (InputFilename != Module::getModuleInputBufferName()) {
+      Opts.Inputs.emplace_back(Root->getRef(), InputFilename, Opts.DashX,
+                               /*isSystem=*/false);
+    } else {
+      assert(Opts.ProgramAction == frontend::GenerateModule);
+
+      auto Kind = Opts.DashX.withFormat(InputKind::Source);
+      auto Contents = BaseFile->getContents();
+      if (!Contents)
+        return reportError(Contents.takeError());
+      auto Buffer = llvm::MemoryBufferRef(Contents->getData(), InputFilename);
+      Opts.Inputs.emplace_back(Root->getRef(), Buffer, Kind,
+                               (bool)Opts.IsSystemModule);
+    }
     return;
   }
   if (!Opts.CASInputFileCASID.empty()) {
@@ -2421,6 +2488,8 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
       getDiagnostics().Report(ImportLoc, diag::warn_missing_submodule)
           << Module->getFullModuleName()
           << SourceRange(Path.front().getLoc(), Path.back().getLoc());
+
+      Module->IsInferredMissingFromUmbrellaHeader = true;
 
       return ModuleLoadResult(Module, ModuleLoadResult::MissingExpected);
     }

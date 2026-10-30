@@ -90,10 +90,16 @@ protected:
 
   IncludeTree makeTree(IncludeTree::File File,
                        ArrayRef<IncludeTree::IncludeInfo> Includes = {},
-                       llvm::SmallBitVector Checks = {}) {
+                       llvm::SmallBitVector Checks = {},
+                       std::optional<StringRef> Submodule = std::nullopt) {
+    std::optional<ObjectRef> SubmoduleName;
+    if (Submodule)
+      EXPECT_THAT_ERROR(
+          DB->storeFromString({}, *Submodule).moveInto(SubmoduleName),
+          Succeeded());
     std::optional<IncludeTree> Tree;
     EXPECT_THAT_ERROR(IncludeTree::create(*DB, SrcMgr::C_User, File.getRef(),
-                                          Includes, std::nullopt, Checks)
+                                          Includes, SubmoduleName, Checks)
                           .moveInto(Tree),
                       Succeeded());
     return *Tree;
@@ -108,7 +114,8 @@ protected:
   /// \p FileLists are the file lists of the AST files that are imported.
   std::string makeRoot(const IncludeTree &MainTree,
                        std::optional<ObjectRef> PCH = std::nullopt,
-                       ArrayRef<ObjectRef> FileLists = {}) {
+                       ArrayRef<ObjectRef> FileLists = {},
+                       std::optional<ObjectRef> ModuleMap = std::nullopt) {
     std::optional<IncludeTree::FileList> List;
     EXPECT_THAT_ERROR(IncludeTree::FileList::create(*DB, FileEntries, FileLists)
                           .moveInto(List),
@@ -116,7 +123,7 @@ protected:
     FileEntries.clear();
     std::optional<IncludeTreeRoot> Root;
     EXPECT_THAT_ERROR(IncludeTreeRoot::create(*DB, MainTree.getRef(),
-                                              List->getRef(), PCH, std::nullopt,
+                                              List->getRef(), PCH, ModuleMap,
                                               std::nullopt)
                           .moveInto(Root),
                       Succeeded());
@@ -130,7 +137,8 @@ protected:
   /// Run \p Action on a compiler invocation created from \p Args, with the
   /// shared CAS and an empty base file system.
   bool run(ArrayRef<const char *> Args, FrontendAction &Action,
-           TextDiagnosticBuffer *&Diags, bool ExpectErrors = false) {
+           TextDiagnosticBuffer *&Diags, bool ExpectErrors = false,
+           IntrusiveRefCntPtr<llvm::vfs::FileSystem> BaseFS = nullptr) {
     auto Invocation = std::make_shared<CompilerInvocation>();
     DiagnosticOptions DiagOpts;
     DiagsStorage = std::make_unique<TextDiagnosticBuffer>();
@@ -142,8 +150,9 @@ protected:
 
     CompilerInstance Compiler(std::move(Invocation));
     Compiler.setCASDatabases(DB, Cache);
-    Compiler.createVirtualFileSystem(
-        llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>(), Diags);
+    if (!BaseFS)
+      BaseFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
+    Compiler.createVirtualFileSystem(std::move(BaseFS), Diags);
     Compiler.createDiagnostics(Diags, /*ShouldOwnClient=*/false);
     bool Success = Compiler.ExecuteAction(Action);
     if (!ExpectErrors)
@@ -239,6 +248,92 @@ TEST_F(CASIncludeTreeTest, PCH) {
   ASSERT_TRUE(run(Args, Action, Diags));
   EXPECT_EQ(Diags->getNumErrors(), 0u);
   EXPECT_TRUE(llvm::is_contained(Action.DeclNames, "use_pch"));
+}
+
+TEST_F(CASIncludeTreeTest, Module) {
+  if (!llvm::cas::isOnDiskCASEnabled())
+    GTEST_SKIP() << "needs a temporary directory for the module output";
+
+  // Build module 'Mod' with submodule 'Mod.Sub' from an include-tree. The
+  // include-tree provides the module map and the module's input buffer.
+  IncludeTree Predefines = makePredefinesTree();
+  IncludeTree SubHeader = makeTree(addFile("Sub.h", "int from_submodule;\n"),
+                                   {}, {}, StringRef("Mod.Sub"));
+  StringRef ModuleIncludes = "#include \"Sub.h\"\n";
+  IncludeTree ModMain = makeTree(
+      addFile(Module::getModuleInputBufferName(), ModuleIncludes),
+      {include(Predefines, 0), include(SubHeader, ModuleIncludes.size())});
+
+  std::optional<IncludeTree::Module> Sub, Mod;
+  ASSERT_THAT_ERROR(IncludeTree::Module::create(
+                        *DB, "Sub", "", IncludeTree::Module::ModuleFlags(), {},
+                        std::nullopt, std::nullopt, std::nullopt)
+                        .moveInto(Sub),
+                    Succeeded());
+  ASSERT_THAT_ERROR(IncludeTree::Module::create(
+                        *DB, "Mod", "", IncludeTree::Module::ModuleFlags(),
+                        {Sub->getRef()}, std::nullopt, std::nullopt,
+                        std::nullopt)
+                        .moveInto(Mod),
+                    Succeeded());
+  std::optional<IncludeTree::ModuleMap> MM;
+  ASSERT_THAT_ERROR(
+      IncludeTree::ModuleMap::create(*DB, {Mod->getRef()}).moveInto(MM),
+      Succeeded());
+  std::string ModRootID = makeRoot(ModMain, std::nullopt, {}, MM->getRef());
+
+  llvm::unittest::TempDir Dir("include-tree-module", /*Unique=*/true);
+  std::string PCMPath = Dir.path("Mod.pcm").str().str();
+  {
+    const char *Args[] = {
+        "-fcas-include-tree", ModRootID.c_str(),   "-x",           "c",
+        "-fmodules",          "-fmodule-name=Mod", "-emit-module", "-o",
+        PCMPath.c_str()};
+    GenerateModuleFromModuleMapAction Action;
+    TextDiagnosticBuffer *Diags;
+    ASSERT_TRUE(run(Args, Action, Diags));
+    EXPECT_EQ(Diags->getNumErrors(), 0u);
+  }
+
+  // Import the submodule from another include-tree. The include-tree file
+  // system provides only the files in the include-tree, so the module file is
+  // part of the file list. The module refers to its input files, so the file
+  // list also includes the module's.
+  auto PCMBuffer = llvm::MemoryBuffer::getFile(PCMPath);
+  ASSERT_TRUE(PCMBuffer);
+  addFile(PCMPath, (*PCMBuffer)->getBuffer());
+  std::optional<CASID> ModRootCASID;
+  ASSERT_THAT_ERROR(DB->parseID(ModRootID).moveInto(ModRootCASID), Succeeded());
+  std::optional<IncludeTreeRoot> ModRoot;
+  ASSERT_THAT_ERROR(IncludeTreeRoot::get(*DB, *DB->getReference(*ModRootCASID))
+                        .moveInto(ModRoot),
+                    Succeeded());
+
+  std::optional<IncludeTree::ModuleImport> Import;
+  ASSERT_THAT_ERROR(IncludeTree::ModuleImport::create(*DB, "Mod.Sub",
+                                                      /*VisibilityOnly=*/false)
+                        .moveInto(Import),
+                    Succeeded());
+  IncludeTree TUPredefines = makePredefinesTree();
+  StringRef TUIncludes = "#include \"Sub.h\"\n";
+  IncludeTree TUMain = makeTree(
+      addFile("t.c",
+              (TUIncludes + "int use = sizeof(from_submodule);\n").str()),
+      {include(TUPredefines, 0),
+       {Import->getRef(), static_cast<uint32_t>(TUIncludes.size()),
+        IncludeTree::NodeKind::ModuleImport}});
+  std::string TURootID =
+      makeRoot(TUMain, std::nullopt, ModRoot->getFileListRef());
+
+  std::string ModuleFileArg = "-fmodule-file=Mod=" + PCMPath;
+  const char *Args[] = {
+      "-fcas-include-tree", TURootID.c_str(),     "-x", "c", "-fmodules",
+      "-fsyntax-only",      ModuleFileArg.c_str()};
+  CollectDeclsAction Action;
+  TextDiagnosticBuffer *Diags;
+  ASSERT_TRUE(run(Args, Action, Diags));
+  EXPECT_EQ(Diags->getNumErrors(), 0u);
+  EXPECT_TRUE(llvm::is_contained(Action.DeclNames, "use"));
 }
 
 TEST_F(CASIncludeTreeTest, InvalidRootID) {
