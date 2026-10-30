@@ -16,19 +16,8 @@
 // RUN: %clang @%t/Inner.rsp
 // RUN: %clang @%t/Outer.rsp -o %t/Outer.pcm
 
-// While Inner's module file exists, it is found with or without the CAS.
-// RUN: %clang -fsyntax-only -fmodules -fimplicit-module-maps \
-// RUN:   -fmodules-cache-path=%t/mcp -I %t -fmodule-file=Outer=%t/Outer.pcm \
-// RUN:   %t/tu.c
-// RUN: %clang -fsyntax-only -fmodules -fimplicit-module-maps \
-// RUN:   -fmodules-cache-path=%t/mcp -I %t -fmodule-file=Outer=%t/Outer.pcm \
-// RUN:   -Xclang -fcas-path -Xclang %t/cas %t/tu.c
-// RUN: %clang -fsyntax-only -fmodules -fimplicit-module-maps \
-// RUN:   -fmodules-cache-path=%t/mcp -I %t -fmodule-file=Outer=%t/Outer.pcm \
-// RUN:   -Xclang -fcas-path -Xclang %t/cas -Xclang -fmodule-load-ignore-cas %t/tu.c
-
-// Without Inner's module file, it can only be loaded out of the CAS.
-// RUN: rm -rf %t/module-cache
+// Outer refers to Inner by the file name of Inner's module file, so Inner
+// can only be loaded out of the CAS.
 // RUN: %clang -fsyntax-only -fmodules -fimplicit-module-maps \
 // RUN:   -fmodules-cache-path=%t/mcp -I %t -fmodule-file=Outer=%t/Outer.pcm \
 // RUN:   -Xclang -fcas-path -Xclang %t/cas %t/tu.c

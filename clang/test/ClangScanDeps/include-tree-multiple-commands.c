@@ -96,12 +96,12 @@
 // CHECK-NOT:            "-fcas-input-file-cache-key"
 // CHECK:                "-E"
 // CHECK:                "-fmodule-file-cache-key"
-// CHECK-NEXT:           "[[PREFIX]]/modules/{{.*}}/Mod-{{.*}}.pcm"
+// CHECK-NEXT:           "Mod-{{.*}}.pcm"
 // CHECK-NEXT:           "[[M_CACHE_KEY]]"
 // CHECK:                "-x"
 // CHECK-NEXT:           "c"
 // CHECK-NOT:            "{{.*}}tu.c"
-// CHECK:                "-fmodule-file={{.*}}[[PREFIX]]/modules/{{.*}}/Mod-{{.*}}.pcm"
+// CHECK:                "-fmodule-file=Mod=Mod-{{.*}}.pcm"
 // CHECK:              ]
 // CHECK:              "file-deps": [
 // CHECK-NEXT:           "[[SRC]]/tu.c"
@@ -129,12 +129,12 @@
 // CHECK-NEXT:           "[[CPP_CACHE_KEY]]"
 // CHECK:                "-emit-llvm-bc"
 // CHECK:                "-fmodule-file-cache-key"
-// CHECK-NEXT:           "[[PREFIX]]/modules/{{.*}}/Mod-{{.*}}.pcm"
+// CHECK-NEXT:           "Mod-{{.*}}.pcm"
 // CHECK-NEXT:           "[[M_CACHE_KEY]]"
 // CHECK:                "-x"
 // CHECK-NEXT:           "c-cpp-output"
 // CHECK-NOT:            "{{.*}}tu.i"
-// CHECK:                "-fmodule-file={{.*}}[[PREFIX]]/modules/{{.*}}/Mod-{{.*}}.pcm"
+// CHECK:                "-fmodule-file=Mod=Mod-{{.*}}.pcm"
 // CHECK:              ]
 // CHECK:              "input-file": "[[SRC]]/tu.c"
 // CHECK-NEXT:       }

@@ -351,10 +351,14 @@ ModuleDepCollector::getInvocationAdjustedForModuleBuildWithoutOutputs(
 
   // Report the prebuilt modules this module uses.
   for (const auto &PrebuiltModule : Deps.PrebuiltModuleDeps) {
-    CI.getMutFrontendOpts().ModuleFiles.push_back(PrebuiltModule.PCMFile);
-    if (!PrebuiltModule.ModuleCacheKey.empty())
+    if (!PrebuiltModule.ModuleCacheKey.empty()) {
+      // canonicalize the PCM path if using CAS.
+      auto PCMFile = llvm::sys::path::filename(PrebuiltModule.PCMFile);
+      CI.getMutFrontendOpts().ModuleFiles.push_back(PCMFile.str());
       CI.getMutFrontendOpts().ModuleCacheKeys.emplace_back(
-          PrebuiltModule.PCMFile, PrebuiltModule.ModuleCacheKey);
+          PCMFile, PrebuiltModule.ModuleCacheKey);
+    } else
+      CI.getMutFrontendOpts().ModuleFiles.push_back(PrebuiltModule.PCMFile);
   }
 
   // Add module file inputs from dependencies.
@@ -420,9 +424,11 @@ void ModuleDepCollector::addModuleFiles(
         Controller.lookupModuleOutput(*MD, ModuleOutputKind::ModuleFile);
 
     assert(MD && "Inconsistent dependency info");
-    if (MD->ModuleCacheKey)
+    if (MD->ModuleCacheKey) {
+      PCMPath = llvm::sys::path::filename(PCMPath);
       CI.getFrontendOpts().ModuleCacheKeys.emplace_back(PCMPath,
                                                         *MD->ModuleCacheKey);
+    }
     if (Service.getOpts().EagerLoadModules)
       CI.getFrontendOpts().ModuleFiles.push_back(std::move(PCMPath));
     else
@@ -439,9 +445,11 @@ void ModuleDepCollector::addModuleFiles(
         Controller.lookupModuleOutput(*MD, ModuleOutputKind::ModuleFile);
 
     assert(MD && "Inconsistent dependency info");
-    if (MD->ModuleCacheKey)
+    if (MD->ModuleCacheKey) {
+      PCMPath = llvm::sys::path::filename(PCMPath);
       CI.getMutFrontendOpts().ModuleCacheKeys.emplace_back(PCMPath,
                                                            *MD->ModuleCacheKey);
+    }
     if (Service.getOpts().EagerLoadModules)
       CI.getMutFrontendOpts().ModuleFiles.push_back(std::move(PCMPath));
     else
